@@ -1,0 +1,33 @@
+<script lang="ts">
+    import type { Snippet } from "svelte";
+
+    interface Props {
+        onclose: () => void;
+        class?: string;
+        children: Snippet;
+    }
+
+    let { onclose, class: className = "", children }: Props = $props();
+
+    function handleKeydown(e: KeyboardEvent) {
+        if (e.key === "Escape") onclose();
+    }
+</script>
+
+<svelte:window onkeydown={handleKeydown} />
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+    class="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center"
+    onmousedown={onclose}
+    onkeydown={() => {}}
+>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+        class="bg-white dark:bg-[#0a0a0a] dark:border dark:border-white/8 rounded-3xl overflow-hidden shadow-2xl p-0.5 {className}"
+        onmousedown={(e) => e.stopPropagation()}
+        onkeydown={() => {}}
+    >
+        {@render children()}
+    </div>
+</div>

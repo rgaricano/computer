@@ -1,0 +1,34 @@
+[project]
+name = "cptr"
+version = "0.0.1"
+description = "Your computer, from anywhere - code, manage, and control your machine from the web."
+license = {file = "LICENSE"}
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1",
+    "fastapi[standard]>=0.128.8",
+    "httpx>=0.28.1",
+    "watchdog>=6.0.0",
+    "bcrypt>=4.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "alembic>=1.13",
+    "PyJWT>=2.8",
+    "cryptography>=42.0",
+    "python-socketio[asgi]>=5.11",
+]
+
+[project.optional-dependencies]
+pam = ["python-pam>=2.0"]
+
+[project.scripts]
+cptr = "cptr.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cptr"]
+artifacts = ["cptr/frontend/build"]

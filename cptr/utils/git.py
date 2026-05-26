@@ -1,0 +1,376 @@
+"""Git operations via subprocess.
+
+Cross-platform (macOS, Linux, Windows). Uses --porcelain flags
+for machine-stable output. All functions take a repo root path.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from typing import Any
+
+
+async def _run(
+    *args: str,
+    cwd: str,
+    check: bool = True,
+) -> tuple[int, str, str]:
+    """Run a git command and return (returncode, stdout, stderr)."""
+    proc = await asyncio.create_subprocess_exec(
+        "git", *args,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"},
+    )
+    stdout_bytes, stderr_bytes = await proc.communicate()
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+    if check and proc.returncode != 0:
+        raise GitError(stderr.strip() or stdout.strip(), proc.returncode)
+    return proc.returncode, stdout, stderr
+
+
+class GitError(Exception):
+    """Raised when a git command fails."""
+
+    def __init__(self, message: str, returncode: int = 1):
+        super().__init__(message)
+        self.returncode = returncode
+
+
+async def is_repo(root: str) -> bool:
+    """Check if directory is inside a git repo."""
+    code, _, _ = await _run(
+        "rev-parse", "--is-inside-work-tree",
+        cwd=root, check=False,
+    )
+    return code == 0
+
+
+async def status(root: str) -> dict[str, Any]:
+    """Get repo status using porcelain v2 format."""
+    _, out, _ = await _run("status", "--porcelain=v2", "--branch", "--untracked-files=all", cwd=root)
+
+    branch = ""
+    upstream = ""
+    ahead = 0
+    behind = 0
+    files: list[dict] = []
+
+    for line in out.splitlines():
+        if line.startswith("# branch.head "):
+            branch = line.split(" ", 2)[2]
+        elif line.startswith("# branch.upstream "):
+            upstream = line.split(" ", 2)[2]
+        elif line.startswith("# branch.ab "):
+            parts = line.split()
+            ahead = int(parts[2].lstrip("+"))
+            behind = abs(int(parts[3].lstrip("-")))
+        elif line.startswith("1 ") or line.startswith("2 "):
+            # Changed entry
+            parts = line.split(" ", 8)
+            xy = parts[1]
+            path = parts[-1]
+            # "2" entries (rename/copy) have original path after tab
+            if line.startswith("2 "):
+                path = path.split("\t")[0]
+            staged_code = xy[0]
+            unstaged_code = xy[1]
+            if staged_code != ".":
+                files.append({
+                    "path": path,
+                    "status": _status_char(staged_code),
+                    "staged": True,
+                })
+            if unstaged_code != ".":
+                files.append({
+                    "path": path,
+                    "status": _status_char(unstaged_code),
+                    "staged": False,
+                })
+        elif line.startswith("? "):
+            # Untracked
+            path = line[2:]
+            files.append({"path": path, "status": "untracked", "staged": False})
+        elif line.startswith("u "):
+            # Unmerged
+            parts = line.split(" ", 10)
+            path = parts[-1]
+            files.append({"path": path, "status": "conflict", "staged": False})
+
+    return {
+        "branch": branch,
+        "upstream": upstream,
+        "ahead": ahead,
+        "behind": behind,
+        "files": files,
+    }
+
+
+def _status_char(c: str) -> str:
+    """Convert porcelain status char to readable string."""
+    return {
+        "M": "modified",
+        "A": "added",
+        "D": "deleted",
+        "R": "renamed",
+        "C": "copied",
+        "T": "type-changed",
+    }.get(c, c)
+
+
+async def diff(
+    root: str,
+    file: str | None = None,
+    staged: bool = False,
+    untracked: bool = False,
+) -> dict[str, Any]:
+    """Get diff output as structured data."""
+    if untracked and file:
+        # Untracked files: use --no-index to diff against empty
+        _, out, _ = await _run(
+            "diff", "--no-index", "--unified=3",
+            "--", "/dev/null", file,
+            cwd=root, check=False,
+        )
+        return _parse_diff(out)
+
+    args = ["diff", "--unified=3"]
+    if staged:
+        args.append("--staged")
+    if file:
+        args.extend(["--", file])
+
+    _, out, _ = await _run(*args, cwd=root)
+    return _parse_diff(out)
+
+
+def _parse_diff(raw: str) -> dict[str, Any]:
+    """Parse unified diff into structured format."""
+    files: list[dict] = []
+    current_file: dict | None = None
+    current_hunk: dict | None = None
+
+    for line in raw.splitlines():
+        if line.startswith("diff --git"):
+            if current_file and current_hunk:
+                current_file["hunks"].append(current_hunk)
+            if current_file:
+                files.append(current_file)
+            # Extract path from "diff --git a/foo b/foo"
+            parts = line.split(" b/", 1)
+            path = parts[1] if len(parts) > 1 else ""
+            current_file = {"path": path, "hunks": []}
+            current_hunk = None
+        elif line.startswith("@@ "):
+            if current_file and current_hunk:
+                current_file["hunks"].append(current_hunk)
+            current_hunk = {"header": line, "lines": []}
+        elif current_hunk is not None:
+            if line.startswith("+"):
+                current_hunk["lines"].append({"type": "added", "content": line[1:]})
+            elif line.startswith("-"):
+                current_hunk["lines"].append({"type": "removed", "content": line[1:]})
+            elif line.startswith(" "):
+                current_hunk["lines"].append({"type": "context", "content": line[1:]})
+            elif line.startswith("\\"):
+                # "\ No newline at end of file"
+                pass
+
+    if current_file and current_hunk:
+        current_file["hunks"].append(current_hunk)
+    if current_file:
+        files.append(current_file)
+
+    return {"files": files}
+
+
+async def stage(root: str, files: list[str]) -> None:
+    """Stage files for commit."""
+    if not files:
+        return
+    await _run("add", "--", *files, cwd=root)
+
+
+async def unstage(root: str, files: list[str]) -> None:
+    """Unstage files."""
+    if not files:
+        return
+    await _run("restore", "--staged", "--", *files, cwd=root)
+
+
+async def discard(root: str, files: list[str]) -> None:
+    """Discard unstaged changes in files."""
+    if not files:
+        return
+    await _run("checkout", "--", *files, cwd=root)
+
+
+async def commit(root: str, message: str) -> dict[str, str]:
+    """Create a commit. Returns hash and message."""
+    _, out, _ = await _run("commit", "-m", message, cwd=root)
+    # Parse "main abc1234] message"
+    hash_short = ""
+    for line in out.splitlines():
+        if "]" in line:
+            bracket = line.split("]")[0]
+            parts = bracket.split()
+            if parts:
+                hash_short = parts[-1]
+            break
+    return {"hash": hash_short, "message": message}
+
+
+async def log(
+    root: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Get commit log."""
+    fmt = "%H%x00%h%x00%an%x00%aI%x00%s"
+    _, out, _ = await _run(
+        "log", f"--format={fmt}", f"-n{limit}", f"--skip={offset}",
+        "--no-merges",
+        cwd=root,
+        check=False,
+    )
+
+    commits = []
+    for line in out.strip().splitlines():
+        parts = line.split("\x00")
+        if len(parts) >= 5:
+            commits.append({
+                "hash": parts[0],
+                "short_hash": parts[1],
+                "author": parts[2],
+                "date": parts[3],
+                "message": parts[4],
+            })
+    return commits
+
+
+async def show(root: str, ref: str) -> dict[str, Any]:
+    """Show a commit's diff."""
+    fmt = "%H%x00%h%x00%an%x00%aI%x00%s"
+    _, out, _ = await _run(
+        "show", ref, f"--format={fmt}", "--patch",
+        cwd=root,
+    )
+
+    # First line is the formatted header, rest is diff
+    lines = out.split("\n", 1)
+    header_parts = lines[0].split("\x00")
+    diff_text = lines[1] if len(lines) > 1 else ""
+
+    info: dict[str, Any] = {}
+    if len(header_parts) >= 5:
+        info = {
+            "hash": header_parts[0],
+            "short_hash": header_parts[1],
+            "author": header_parts[2],
+            "date": header_parts[3],
+            "message": header_parts[4],
+        }
+
+    info["diff"] = _parse_diff(diff_text)
+    return info
+
+
+async def branches(root: str) -> dict[str, Any]:
+    """List branches."""
+    # Local branches
+    _, local_out, _ = await _run(
+        "branch", "--format=%(refname:short)\t%(HEAD)",
+        cwd=root, check=False,
+    )
+    # Remote branches
+    _, remote_out, _ = await _run(
+        "branch", "-r", "--format=%(refname:short)",
+        cwd=root, check=False,
+    )
+
+    current = ""
+    local: list[str] = []
+    remote: list[str] = []
+
+    for line in local_out.strip().splitlines():
+        parts = line.split("\t", 1)
+        name = parts[0].strip()
+        if not name:
+            continue
+        is_head = len(parts) > 1 and parts[1].strip() == "*"
+        if is_head:
+            current = name
+        local.append(name)
+
+    for line in remote_out.strip().splitlines():
+        name = line.strip()
+        if name and "/" in name and name != "origin/HEAD" and "->" not in name:
+            remote.append(name)
+
+    return {"current": current, "local": local, "remote": remote}
+
+
+async def checkout(root: str, branch: str) -> None:
+    """Switch branch."""
+    await _run("checkout", branch, cwd=root)
+
+
+async def create_branch(
+    root: str,
+    name: str,
+    from_ref: str | None = None,
+) -> None:
+    """Create and switch to a new branch."""
+    args = ["checkout", "-b", name]
+    if from_ref:
+        args.append(from_ref)
+    await _run(*args, cwd=root)
+
+
+async def delete_branch(root: str, name: str) -> None:
+    """Delete a local branch."""
+    await _run("branch", "-d", name, cwd=root)
+
+
+async def pull(root: str) -> dict[str, Any]:
+    """Pull from remote."""
+    code, out, err = await _run("pull", cwd=root, check=False)
+    return {"ok": code == 0, "message": (out + err).strip()}
+
+
+async def push(root: str, force: bool = False) -> dict[str, Any]:
+    """Push to remote."""
+    args = ["push"]
+    if force:
+        args.append("--force-with-lease")
+    code, out, err = await _run(*args, cwd=root, check=False)
+    return {"ok": code == 0, "message": (out + err).strip()}
+
+
+async def stash_list(root: str) -> list[dict[str, str]]:
+    """List stashes."""
+    _, out, _ = await _run("stash", "list", "--format=%gd%x00%s", cwd=root, check=False)
+    stashes = []
+    for line in out.strip().splitlines():
+        parts = line.split("\x00", 1)
+        if len(parts) >= 2:
+            stashes.append({"ref": parts[0], "message": parts[1]})
+    return stashes
+
+
+async def stash_save(root: str, message: str | None = None) -> dict[str, Any]:
+    """Stash changes."""
+    args = ["stash", "push"]
+    if message:
+        args.extend(["-m", message])
+    code, out, err = await _run(*args, cwd=root, check=False)
+    return {"ok": code == 0, "message": (out + err).strip()}
+
+
+async def stash_pop(root: str, index: int = 0) -> dict[str, Any]:
+    """Pop a stash."""
+    code, out, err = await _run("stash", "pop", f"stash@{{{index}}}", cwd=root, check=False)
+    return {"ok": code == 0, "message": (out + err).strip()}

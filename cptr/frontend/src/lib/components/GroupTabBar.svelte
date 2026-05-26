@@ -1,0 +1,356 @@
+<script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
+	import Sortable from 'sortablejs';
+	import {
+		activeWorkspace,
+		setActiveTab,
+		closeTab,
+		setActiveGroup,
+		reorderTabs,
+		openUntitledFileTab,
+		openTerminalTab,
+		openInSplit,
+		closeGroup,
+		moveTabToGroup,
+		splitActive,
+		splitCurrentTab,
+		setSplitDirection,
+		sidebarOpen,
+
+		type EditorGroup,
+		type Tab,
+	} from '$lib/stores';
+	import { openChatTab } from '$lib/stores';
+	import { chatEnabled } from '$lib/stores/chat';
+	import Icon from './Icon.svelte';
+	import DropdownMenu from './DropdownMenu.svelte';
+	import { tooltip } from '$lib/tooltip';
+	import { t } from '$lib/i18n';
+
+	interface Props {
+		group: EditorGroup;
+		canClose?: boolean;
+		isPrimary?: boolean;
+	}
+
+	let { group, canClose = false, isPrimary = false }: Props = $props();
+
+	let tabsEl: HTMLDivElement | undefined = $state();
+	let sortable: Sortable | null = null;
+
+	// Plus menu
+	let plusBtnEl: HTMLButtonElement | undefined = $state();
+	let showPlusMenu = $state(false);
+
+	// Split menu
+	let splitBtnEl: HTMLButtonElement | undefined = $state();
+	let showSplitMenu = $state(false);
+
+	// Context menu
+	let contextMenu = $state<{ tab: Tab; x: number; y: number } | null>(null);
+
+	let isWideScreen = $state(typeof window !== 'undefined' ? window.innerWidth >= 1024 : false);
+
+	// Drop target highlight for cross-group drag
+	let dropHighlight = $state(false);
+
+	const displayTabs = $derived(
+		(group?.tabs ?? []).filter((t) => t.type !== 'git')
+	);
+
+	const isActiveGroup = $derived($activeWorkspace?.activeGroupId === group?.id);
+
+	function tabIconName(tab: Tab): string {
+		switch (tab.type) {
+			case 'files': return 'folder';
+			case 'terminal': return 'terminal';
+			case 'file': return 'page';
+			case 'git': return 'git-diff';
+			case 'chat': return 'chat-bubble';
+			case 'preview': return 'monitor';
+			default: return 'page';
+		}
+	}
+
+	function handleTabClick(tab: Tab) {
+		setActiveTab(tab.id, group.id);
+	}
+
+	function handleClose(e: Event, tabId: string) {
+		e.stopPropagation();
+		closeTab(tabId, group.id);
+	}
+
+	function handleContextMenu(e: MouseEvent, tab: Tab) {
+		if (!isWideScreen) return;
+		e.preventDefault();
+		contextMenu = { tab, x: e.clientX, y: e.clientY };
+	}
+
+	function handlePaneClick() {
+		if (!isActiveGroup) {
+			setActiveGroup(group.id);
+		}
+	}
+
+	function toggleSidebar() {
+		sidebarOpen.update((v) => !v);
+	}
+
+	// Native drag handlers are NOT needed — Sortable's setData handles it.
+	// We keep the native drop handlers on the bar for cross-group drops.
+
+	function handleBarDragOver(e: DragEvent) {
+		// Only accept tab drags (not file uploads)
+		if (!e.dataTransfer?.types.includes('text/tab-id')) return;
+		const sourceGroupId = e.dataTransfer.types.includes('text/group-id') ? 'unknown' : null;
+		if (!sourceGroupId) return;
+		e.preventDefault();
+		e.dataTransfer.dropEffect = 'move';
+		dropHighlight = true;
+	}
+
+	function handleBarDragLeave() {
+		dropHighlight = false;
+	}
+
+	function handleBarDrop(e: DragEvent) {
+		dropHighlight = false;
+		if (!e.dataTransfer) return;
+		const tabId = e.dataTransfer.getData('text/tab-id');
+		const fromGroupId = e.dataTransfer.getData('text/group-id');
+		if (!tabId || !fromGroupId) return;
+		if (fromGroupId === group.id) return; // same group, ignore
+		e.preventDefault();
+		moveTabToGroup(tabId, fromGroupId, group.id);
+	}
+
+	const plusMenuItems = $derived([
+		{
+			label: $t('bar.newFile'),
+			icon: 'page',
+			onclick: () => { openUntitledFileTab(group.id); },
+		},
+		...($chatEnabled ? [{
+			label: $t('bar.newChat'),
+			icon: 'chat-bubble',
+			onclick: () => { openChatTab(undefined, group.id); },
+		}] : []),
+		{
+			label: $t('bar.newTerminal'),
+			icon: 'terminal',
+			onclick: () => { openTerminalTab(group.id); },
+		},
+	]);
+
+	const contextMenuItems = $derived.by(() => {
+		if (!contextMenu) return [];
+		const tab = contextMenu.tab;
+		const items: { label: string; icon?: string; onclick: () => void; divider?: boolean }[] = [];
+
+		if (isWideScreen && tab.type === 'file' && tab.filePath && !$splitActive) {
+			items.push({
+				label: 'Split Right',
+				icon: 'split-horizontal',
+				onclick: () => openInSplit(tab.filePath!, 'horizontal'),
+			});
+			items.push({
+				label: 'Split Down',
+				icon: 'split-vertical',
+				onclick: () => openInSplit(tab.filePath!, 'vertical'),
+			});
+		}
+
+		if (!tab.permanent) {
+			if (items.length > 0) items.push({ label: '', onclick: () => {}, divider: true });
+			items.push({
+				label: $t('bar.closeTab'),
+				icon: 'xmark',
+				onclick: () => closeTab(tab.id, group.id),
+			});
+		}
+
+		return items;
+	});
+
+	const splitMenuItems = $derived.by(() => {
+		const direction = $activeWorkspace?.splitDirection ?? 'horizontal';
+		return [
+			{
+				label: 'Split Right',
+				icon: 'split-horizontal',
+				active: direction === 'horizontal',
+				onclick: () => { setSplitDirection('horizontal'); if (!$splitActive) splitCurrentTab('horizontal'); },
+			},
+			{
+				label: 'Split Down',
+				icon: 'split-vertical',
+				active: direction === 'vertical',
+				onclick: () => { setSplitDirection('vertical'); if (!$splitActive) splitCurrentTab('vertical'); },
+			},
+		];
+	});
+
+	function handleResize() {
+		isWideScreen = window.innerWidth >= 1024;
+	}
+
+	onMount(() => {
+		if (tabsEl) {
+			sortable = Sortable.create(tabsEl, {
+				animation: 150,
+				ghostClass: 'opacity-30',
+				dragClass: 'cursor-grabbing',
+				direction: 'horizontal',
+				delay: 200,
+				delayOnTouchOnly: true,
+				touchStartThreshold: 5,
+				setData: (dataTransfer: DataTransfer, dragEl: HTMLElement) => {
+					const tabId = dragEl.dataset.tabId ?? '';
+					dataTransfer.setData('text/tab-id', tabId);
+					dataTransfer.setData('text/group-id', group.id);
+				},
+				onEnd: (evt) => {
+					if (evt.oldIndex != null && evt.newIndex != null && evt.oldIndex !== evt.newIndex) {
+						reorderTabs(evt.oldIndex, evt.newIndex, group.id);
+					}
+				},
+			});
+		}
+		window.addEventListener('resize', handleResize);
+	});
+
+	onDestroy(() => {
+		sortable?.destroy();
+		if (typeof window !== 'undefined') window.removeEventListener('resize', handleResize);
+	});
+</script>
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="flex items-center h-9 px-1.5 gap-1 shrink-0 select-none border-b transition-colors duration-100
+		{dropHighlight
+			? 'border-blue-400 bg-blue-50 dark:bg-blue-500/5 dark:border-blue-500/40'
+			: 'border-gray-200 dark:border-white/6'}
+		{isActiveGroup ? '' : 'opacity-50'}"
+	onclick={handlePaneClick}
+	ondragover={handleBarDragOver}
+	ondragleave={handleBarDragLeave}
+	ondrop={handleBarDrop}
+>
+	<!-- Sidebar toggle (only in primary group when sidebar is closed) -->
+	{#if isPrimary && !$sidebarOpen}
+		<button class="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-100" onclick={toggleSidebar} aria-label={$t('bar.toggleSidebar')} use:tooltip={$t('bar.sidebar')}>
+			<Icon name="sidebar-expand" size={14} />
+		</button>
+	{/if}
+
+	<!-- Tabs -->
+	<div class="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto group-tabs-row py-0.5">
+		<div bind:this={tabsEl} class="flex items-center gap-0.5 shrink-0">
+			{#each displayTabs as tab (tab.id)}
+				{@const isActive = tab.id === group.activeTabId}
+				<button
+					class="flex items-center gap-1.5 px-2.5 h-7 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 transition-all duration-100
+						{isActive
+							? 'bg-gray-200 text-gray-900 dark:bg-white/8 dark:text-white'
+							: 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}"
+					data-tab-id={tab.id}
+					onclick={() => handleTabClick(tab)}
+					oncontextmenu={(e) => handleContextMenu(e, tab)}
+				>
+					<Icon name={tabIconName(tab)} size={14} />
+					<span class="max-w-30 overflow-hidden text-ellipsis">
+						{tab.type === 'files' ? ($activeWorkspace?.name ?? 'Files') : tab.label}
+					</span>
+					{#if tab.unsaved}<span class="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0"></span>{/if}
+					{#if !tab.permanent}
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<span
+							class="flex items-center justify-center w-4 h-4 rounded text-gray-400 opacity-0 hover:bg-gray-300 hover:text-gray-700 dark:hover:bg-white/10 dark:hover:text-white transition-opacity duration-100"
+							onclick={(e) => handleClose(e, tab.id)}
+							onkeydown={(e) => { if (e.key === 'Enter') handleClose(e, tab.id); }}
+							role="button"
+							tabindex="-1"
+							aria-label={$t('bar.closeTab')}
+						>
+							<Icon name="xmark" size={12} />
+						</span>
+					{/if}
+				</button>
+			{/each}
+		</div>
+
+		<!-- Plus button -->
+		<button
+			bind:this={plusBtnEl}
+			class="flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 shrink-0"
+			onclick={() => showPlusMenu = !showPlusMenu}
+			aria-label={$t('bar.new')}
+			use:tooltip={$t('bar.new')}
+		>
+			<Icon name="plus" size={14} />
+		</button>
+	</div>
+
+	<!-- Right-side controls -->
+	<div class="flex items-center gap-0.5 shrink-0">
+		<!-- Split button (wide screens, primary group only) -->
+		{#if isPrimary && isWideScreen}
+			<button
+				bind:this={splitBtnEl}
+				class="flex items-center justify-center w-7 h-7 rounded-lg transition-colors duration-100 shrink-0
+					{$splitActive
+						? 'bg-gray-200 text-gray-900 dark:bg-white/8 dark:text-white'
+						: 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}"
+				onclick={() => showSplitMenu = !showSplitMenu}
+				aria-label="Split Editor"
+				use:tooltip={'Split Editor'}
+			>
+				<Icon name={$activeWorkspace?.splitDirection === 'vertical' ? 'split-vertical' : 'split-horizontal'} size={14} />
+			</button>
+		{/if}
+
+
+
+		<!-- Close group button (when split is active) -->
+		{#if canClose}
+			<button
+				class="flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 shrink-0"
+				onclick={() => closeGroup(group.id)}
+				aria-label="Close pane"
+				use:tooltip={'Close pane'}
+			>
+				<Icon name="xmark" size={12} />
+			</button>
+		{/if}
+	</div>
+</div>
+
+{#if showPlusMenu && plusBtnEl}
+	<DropdownMenu items={plusMenuItems} anchor={plusBtnEl} onclose={() => showPlusMenu = false} />
+{/if}
+
+{#if contextMenu}
+	<DropdownMenu items={contextMenuItems} anchor={{ x: contextMenu.x, y: contextMenu.y }} onclose={() => contextMenu = null} />
+{/if}
+
+{#if showSplitMenu && splitBtnEl}
+	<DropdownMenu items={splitMenuItems} anchor={splitBtnEl} onclose={() => showSplitMenu = false} />
+{/if}
+
+<style>
+	@reference "../../app.css";
+
+	button:hover > span[role="button"] {
+		opacity: 1;
+	}
+
+	.group-tabs-row {
+		scrollbar-width: none;
+		-ms-overflow-style: none;
+	}
+	.group-tabs-row::-webkit-scrollbar {
+		display: none;
+	}
+</style>

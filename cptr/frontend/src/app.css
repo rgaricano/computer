@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+
+  /* Exact Open WebUI gray scale - pure neutral, zero chroma */
+  --color-gray-50: oklch(0.98 0 0);
+  --color-gray-100: oklch(0.94 0 0);
+  --color-gray-200: oklch(0.92 0 0);
+  --color-gray-300: oklch(0.85 0 0);
+  --color-gray-400: oklch(0.77 0 0);
+  --color-gray-500: oklch(0.69 0 0);
+  --color-gray-600: oklch(0.51 0 0);
+  --color-gray-700: oklch(0.42 0 0);
+  --color-gray-800: oklch(0.32 0 0);
+  --color-gray-850: oklch(0.27 0 0);
+  --color-gray-900: oklch(0.2 0 0);
+  --color-gray-950: oklch(0.16 0 0);
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+
+  html {
+    color-scheme: dark light;
+    touch-action: manipulation;
+    overscroll-behavior: none;
+  }
+
+  button {
+    @apply cursor-pointer;
+  }
+}
+
+/* Scrollbar - Open WebUI style */
+::-webkit-scrollbar-thumb {
+  background-color: rgba(67, 67, 67, 0.6);
+  border-color: rgba(0, 0, 0, 1);
+  border-radius: 9999px;
+  border-width: 1px;
+}
+
+::-webkit-scrollbar {
+  height: 0.45rem;
+  width: 0.45rem;
+}
+
+::-webkit-scrollbar-track {
+  background-color: transparent;
+  border-radius: 9999px;
+}
+
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
+/* CodeMirror - match Open WebUI */
+.cm-editor {
+  height: 100%;
+  width: 100%;
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+.dark .cm-editor {
+  background-color: #000 !important;
+}
+
+.dark .cm-gutters {
+  background-color: #000 !important;
+  border: none !important;
+}
+
+.dark .cm-activeLine {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+.dark .cm-activeLineGutter {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+:not(.dark) .cm-gutters {
+  border: none !important;
+}
+
+.cm-scroller:active::-webkit-scrollbar-thumb,
+.cm-scroller:focus::-webkit-scrollbar-thumb,
+.cm-scroller:hover::-webkit-scrollbar-thumb {
+  visibility: visible;
+}
+.cm-scroller::-webkit-scrollbar-thumb {
+  visibility: hidden;
+}
+.cm-scroller::-webkit-scrollbar-corner {
+  display: none;
+}
+
+/* Tippy tooltip theme */
+.tippy-box[data-theme~='cptr'] {
+  background: #1a1a1a;
+  color: #e0e0e0;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 4px;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}

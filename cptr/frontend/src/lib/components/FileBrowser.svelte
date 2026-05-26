@@ -1,0 +1,770 @@
+<script lang="ts">
+	import { activeWorkspace, setFileBrowserCwd, openFileTab, openPreviewTab } from '$lib/stores';
+	import { systemEvents } from '$lib/stores/systemEvents.svelte';
+	import { tooltip } from '$lib/tooltip';
+	import { listDir, downloadArchive, deleteFiles, moveFile, uploadFiles as apiUpload, createEntry } from '$lib/apis/files';
+	import Icon from './Icon.svelte';
+	import DropdownMenu from './DropdownMenu.svelte';
+	import { t } from '$lib/i18n';
+
+	interface FileEntry {
+		name: string;
+		type: string;
+		size: number | null;
+		modified: string | null;
+	}
+
+	let entries = $state<FileEntry[]>([]);
+	let loading = $state(false);
+	let fetchTimer: ReturnType<typeof setTimeout> | null = null;
+	let fetching = false;
+	let error = $state<string | null>(null);
+	let searchQuery = $state('');
+	let dragOverDir = $state<string | null>(null);
+	let draggedItem = $state<string | null>(null);
+	let showNewInput = $state<'file' | 'folder' | null>(null);
+	let newName = $state('');
+	let dropzoneActive = $state(false);
+	let addMenuOpen = $state(false);
+	let showHidden = $state(typeof localStorage !== 'undefined' && localStorage.getItem('fileBrowser:showHidden') === 'true');
+	let sortMenuOpen = $state(false);
+	let sortBtnEl: HTMLButtonElement | undefined = $state();
+	let addBtnEl: HTMLButtonElement | undefined = $state();
+
+	// Sort
+	let sortBy = $state<'name' | 'size' | 'modified'>('name');
+	let sortDir = $state<'asc' | 'desc'>('asc');
+
+	// Multi-select
+	let selectedPaths = $state<Set<string>>(new Set());
+	let lastClickedIndex = $state<number>(-1);
+	let dragOverBreadcrumb = $state<string | null>(null);
+
+	// Context menu
+	let contextMenu = $state<{ x: number; y: number; entry: FileEntry; anchor?: HTMLElement } | null>(null);
+	let renamingEntry = $state<string | null>(null);
+	let renameValue = $state('');
+
+	let cwd = $derived($activeWorkspace?.fileBrowserCwd ?? $activeWorkspace?.path ?? '/');
+	let workspacePath = $derived($activeWorkspace?.path ?? '/');
+
+	// Ports from this workspace's terminals
+	let workspacePorts = $derived(
+		systemEvents.ports.filter((p) =>
+			p.session_id && $activeWorkspace?.groups.some((g) => g.tabs.some((t) => t.sessionId === p.session_id))
+		)
+	);
+
+	let breadcrumbs = $derived(() => {
+		if (!cwd || !workspacePath) return [];
+		const wsName = $activeWorkspace?.name ?? 'workspace';
+		const relative = cwd.startsWith(workspacePath) ? cwd.slice(workspacePath.length) : '';
+		const parts = relative.split('/').filter(Boolean);
+		const segments = [{ name: wsName, path: workspacePath }];
+		let current = workspacePath;
+		for (const part of parts) {
+			current = current + '/' + part;
+			segments.push({ name: part, path: current });
+		}
+		return segments;
+	});
+
+	// Fetch directory on cwd change
+	$effect(() => {
+		if (cwd) {
+			// Immediate fetch for navigation
+			fetchDirectoryImmediate(cwd);
+		}
+	});
+
+	// Keep the websocket watch path in sync (separate effect so it doesn't
+	// re-trigger directory fetches via fsTick feedback loops)
+	$effect(() => {
+		if (cwd) {
+			systemEvents.connect(cwd);
+		}
+	});
+
+	// Auto-refresh on filesystem changes (debounced)
+	$effect(() => {
+		const _tick = systemEvents.fsTick; // subscribe
+		if (_tick > 0 && cwd && !fetching && systemEvents.isRelevantFsChange(cwd)) {
+			debouncedFetch(cwd);
+		}
+	});
+
+	function toggleHidden() {
+		showHidden = !showHidden;
+		localStorage.setItem('fileBrowser:showHidden', String(showHidden));
+		fetchDirectory(cwd);
+	}
+
+	function debouncedFetch(path: string) {
+		if (fetchTimer) clearTimeout(fetchTimer);
+		fetchTimer = setTimeout(() => {
+			fetchTimer = null;
+			fetchDirectoryImmediate(path);
+		}, 300);
+	}
+
+	async function fetchDirectoryImmediate(path: string) {
+		if (fetchTimer) clearTimeout(fetchTimer);
+		fetchTimer = null;
+		if (fetching) return; // skip overlapping fetches
+		fetching = true;
+		loading = true;
+		error = null;
+		try {
+			const data = await listDir(path);
+			// Only apply if still viewing the same directory
+			if (path === cwd) {
+				entries = showHidden
+					? data.entries
+					: data.entries.filter((e: FileEntry) => !e.name.startsWith('.'));
+			}
+		} catch (e: any) {
+			if (path === cwd) {
+				error = e.message || $t('files.failedToLoad');
+				entries = [];
+			}
+		} finally {
+			loading = false;
+			fetching = false;
+		}
+	}
+
+	/** Backward-compatible alias used by action handlers (delete, rename, etc.) */
+	function fetchDirectory(path: string) {
+		debouncedFetch(path);
+	}
+
+	function handleClick(e: MouseEvent, entry: FileEntry, index: number) {
+		const fullPath = cwd.endsWith('/') ? cwd + entry.name : cwd + '/' + entry.name;
+
+		// Multi-select with ctrl/cmd or shift
+		if (e.metaKey || e.ctrlKey) {
+			const next = new Set(selectedPaths);
+			if (next.has(fullPath)) next.delete(fullPath);
+			else next.add(fullPath);
+			selectedPaths = next;
+			lastClickedIndex = index;
+			return;
+		}
+
+		if (e.shiftKey && lastClickedIndex >= 0) {
+			const list = sortedEntries();
+			const start = Math.min(lastClickedIndex, index);
+			const end = Math.max(lastClickedIndex, index);
+			const next = new Set(selectedPaths);
+			for (let i = start; i <= end; i++) {
+				const p = cwd.endsWith('/') ? cwd + list[i].name : cwd + '/' + list[i].name;
+				next.add(p);
+			}
+			selectedPaths = next;
+			return;
+		}
+
+		// Normal click — clear selection and act
+		selectedPaths = new Set();
+		lastClickedIndex = index;
+		if (entry.type === 'directory') {
+			setFileBrowserCwd(fullPath);
+		} else {
+			openFileTab(fullPath);
+		}
+	}
+
+	function navigateTo(path: string) {
+		setFileBrowserCwd(path);
+	}
+
+	function fileIconName(entry: FileEntry): string {
+		if (entry.type === 'directory') return 'folder';
+		const ext = entry.name.split('.').pop()?.toLowerCase() ?? '';
+		if (entry.name === 'Dockerfile') return 'docker';
+		if (entry.name === 'LICENSE' || entry.name === 'LICENSE.md') return 'page-text';
+		if (entry.name.endsWith('.lock')) return 'lock';
+		switch (ext) {
+			case 'md': return 'page-text';
+			case 'ts': case 'tsx': case 'js': case 'jsx':
+			case 'py': case 'rs': case 'go': case 'java':
+			case 'c': case 'cpp': case 'h': case 'hpp':
+			case 'rb': case 'php': case 'swift': case 'kt':
+			case 'svelte': case 'vue':
+				return 'code';
+			case 'json': case 'yaml': case 'yml': case 'toml':
+			case 'ini': case 'cfg': case 'conf':
+				return 'settings';
+			case 'sh': case 'bash': case 'zsh':
+				return 'terminal';
+			case 'css': case 'html': case 'xml':
+				return 'code';
+			default: return 'empty-page';
+		}
+	}
+
+	function formatSize(bytes: number | null): string {
+		if (bytes === null || bytes === undefined) return '';
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${(bytes / 1048576).toFixed(1)} MB`;
+	}
+
+	let filteredEntries = $derived(
+		searchQuery
+			? entries.filter((e) => e.name.toLowerCase().includes(searchQuery.toLowerCase()))
+			: entries
+	);
+
+	let sortedEntries = $derived(() => {
+		const dirs = filteredEntries.filter((e) => e.type === 'directory');
+		const files = filteredEntries.filter((e) => e.type !== 'directory');
+
+		function compare(a: FileEntry, b: FileEntry): number {
+			let result = 0;
+			if (sortBy === 'name') {
+				result = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+			} else if (sortBy === 'size') {
+				result = (a.size ?? 0) - (b.size ?? 0);
+			} else if (sortBy === 'modified') {
+				result = (a.modified ?? '').localeCompare(b.modified ?? '');
+			}
+			return sortDir === 'asc' ? result : -result;
+		}
+
+		dirs.sort(compare);
+		files.sort(compare);
+		return [...dirs, ...files];
+	});
+
+	function toggleSort(field: 'name' | 'size' | 'modified') {
+		if (sortBy === field) {
+			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortBy = field;
+			sortDir = 'asc';
+		}
+	}
+
+	function clearSelection() {
+		selectedPaths = new Set();
+		lastClickedIndex = -1;
+	}
+
+	function selectAll() {
+		const all = new Set<string>();
+		for (const e of sortedEntries()) {
+			const p = cwd.endsWith('/') ? cwd + e.name : cwd + '/' + e.name;
+			all.add(p);
+		}
+		selectedPaths = all;
+	}
+
+	async function archiveSelected() {
+		if (selectedPaths.size === 0) return;
+		try {
+			const res = await downloadArchive([...selectedPaths]);
+			if (!res.ok) return;
+			const disposition = res.headers.get('content-disposition') ?? '';
+			const match = disposition.match(/filename="?([^"]+)"?/);
+			const filename = match?.[1] ?? 'archive.zip';
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = filename;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch {}
+		clearSelection();
+	}
+
+	async function deleteSelected() {
+		if (selectedPaths.size === 0) return;
+		if (!confirm($t('files.deleteItemConfirm', { count: selectedPaths.size }))) return;
+		for (const path of selectedPaths) {
+			try { await deleteFiles([path]); } catch {}
+		}
+		clearSelection();
+		fetchDirectory(cwd);
+	}
+
+	// ── Drag to move ────────────────────────────────────────────
+	function onDragStart(e: DragEvent, entry: FileEntry) {
+		const fullPath = cwd.endsWith('/') ? cwd + entry.name : cwd + '/' + entry.name;
+		draggedItem = fullPath;
+		e.dataTransfer?.setData('text/plain', fullPath);
+		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+	}
+
+	function onDragOverDir(e: DragEvent, entry: FileEntry) {
+		if (entry.type !== 'directory') return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		dragOverDir = entry.name;
+	}
+
+	function onDragLeaveDir() {
+		dragOverDir = null;
+	}
+
+	async function onDropOnDir(e: DragEvent, entry: FileEntry) {
+		e.preventDefault();
+		dragOverDir = null;
+
+		// Handle file browser item drag
+		if (draggedItem) {
+			const dest = cwd.endsWith('/') ? cwd + entry.name : cwd + '/' + entry.name;
+			try {
+				await moveFile(draggedItem, dest);
+				fetchDirectory(cwd);
+			} catch {}
+			draggedItem = null;
+			return;
+		}
+
+		// Handle external file upload
+		const files = e.dataTransfer?.files;
+		if (files && files.length) {
+			const dest = cwd.endsWith('/') ? cwd + entry.name : cwd + '/' + entry.name;
+			await uploadFiles(files, dest);
+		}
+	}
+
+	function onDragEnd() {
+		draggedItem = null;
+		dragOverDir = null;
+		dragOverBreadcrumb = null;
+	}
+
+	// ── Breadcrumb drop ────────────────────────────────────────
+	function onBreadcrumbDragOver(e: DragEvent, path: string) {
+		if (!draggedItem) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		dragOverBreadcrumb = path;
+	}
+
+	function onBreadcrumbDragLeave() {
+		dragOverBreadcrumb = null;
+	}
+
+	async function onBreadcrumbDrop(e: DragEvent, path: string) {
+		e.preventDefault();
+		dragOverBreadcrumb = null;
+		if (!draggedItem) return;
+		try {
+			await moveFile(draggedItem, path);
+			fetchDirectory(cwd);
+		} catch {}
+		draggedItem = null;
+	}
+
+	// ── Drop zone for uploads ───────────────────────────────────
+	function onDropzoneOver(e: DragEvent) {
+		// Only show dropzone for external files (not internal drags)
+		if (draggedItem) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+		dropzoneActive = true;
+	}
+
+	function onDropzoneLeave(e: DragEvent) {
+		// Only deactivate if actually leaving the container
+		const target = e.relatedTarget as HTMLElement | null;
+		if (target && (e.currentTarget as HTMLElement)?.contains(target)) return;
+		dropzoneActive = false;
+	}
+
+	async function onDropzoneDrop(e: DragEvent) {
+		e.preventDefault();
+		dropzoneActive = false;
+		const files = e.dataTransfer?.files;
+		if (files && files.length) {
+			await uploadFiles(files, cwd);
+		}
+	}
+
+	async function uploadFiles(files: FileList, directory: string) {
+		for (const file of Array.from(files)) {
+			const form = new FormData();
+			form.append('file', file);
+			form.append('directory', directory);
+			try { await apiUpload(directory, form); } catch {}
+		}
+		fetchDirectory(cwd);
+	}
+
+	function triggerUpload() {
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.multiple = true;
+		input.onchange = () => {
+			if (input.files) uploadFiles(input.files, cwd);
+		};
+		input.click();
+	}
+
+	// ── New file/folder ─────────────────────────────────────────
+	function startNew(type: 'file' | 'folder') {
+		showNewInput = type;
+		newName = '';
+		addMenuOpen = false;
+	}
+
+	async function confirmNew() {
+		if (!newName.trim() || !showNewInput) return;
+		const fullPath = cwd.endsWith('/') ? cwd + newName.trim() : cwd + '/' + newName.trim();
+		try {
+			await createEntry(fullPath, showNewInput === 'folder' ? 'directory' : 'file');
+			fetchDirectory(cwd);
+		} catch {}
+		showNewInput = null;
+		newName = '';
+	}
+
+	function cancelNew() {
+		showNewInput = null;
+		newName = '';
+	}
+
+	function toggleAddMenu() {
+		addMenuOpen = !addMenuOpen;
+	}
+
+	function handleUploadFromMenu() {
+		addMenuOpen = false;
+		triggerUpload();
+	}
+
+	// ── Context menu ───────────────────────────────────────────
+	function onContextMenu(e: MouseEvent, entry: FileEntry) {
+		e.preventDefault();
+		contextMenu = { x: e.clientX, y: e.clientY, entry };
+	}
+
+	function openEntryMenu(e: MouseEvent, entry: FileEntry) {
+		e.stopPropagation();
+		contextMenu = { x: 0, y: 0, entry, anchor: e.currentTarget as HTMLElement };
+	}
+
+	function closeMenu() {
+		contextMenu = null;
+	}
+
+	function startRename(entry: FileEntry) {
+		renamingEntry = entry.name;
+		renameValue = entry.name;
+		closeMenu();
+	}
+
+	async function confirmRename(oldName: string) {
+		if (!renameValue.trim() || renameValue === oldName) {
+			renamingEntry = null;
+			return;
+		}
+		const src = cwd.endsWith('/') ? cwd + oldName : cwd + '/' + oldName;
+		const dst = cwd.endsWith('/') ? cwd + renameValue.trim() : cwd + '/' + renameValue.trim();
+		try {
+			await moveFile(src, dst);
+			fetchDirectory(cwd);
+		} catch {}
+		renamingEntry = null;
+	}
+
+	async function deleteEntry(entry: FileEntry) {
+		const fullPath = cwd.endsWith('/') ? cwd + entry.name : cwd + '/' + entry.name;
+		const label = entry.type === 'directory' ? $t('files.folder') : $t('files.file');
+		if (!confirm($t('files.deleteEntryConfirm', { type: label, name: entry.name }))) return;
+		try {
+			await deleteFiles([fullPath]);
+			fetchDirectory(cwd);
+		} catch {}
+		closeMenu();
+	}
+
+	function downloadEntry(entry: FileEntry) {
+		const fullPath = cwd.endsWith('/') ? cwd + entry.name : cwd + '/' + entry.name;
+		const a = document.createElement('a');
+		a.href = `/api/workspace/files/download?path=${encodeURIComponent(fullPath)}`;
+		a.download = entry.name;
+		a.click();
+		closeMenu();
+	}
+</script>
+
+
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="flex flex-col h-full overflow-hidden relative"
+	ondragover={onDropzoneOver}
+	ondragleave={onDropzoneLeave}
+	ondrop={onDropzoneDrop}
+>
+	<!-- Header: breadcrumb + actions -->
+	<div class="flex items-center gap-2 h-9 px-3 border-b border-gray-200 dark:border-white/6 shrink-0">
+		<div class="flex items-center gap-1 text-xs min-w-0 flex-1">
+			{#each breadcrumbs() as seg, i}
+				{#if i > 0}<span class="text-gray-300 dark:text-gray-600">/</span>{/if}
+				{#if i === breadcrumbs().length - 1}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<span
+						class="font-medium truncate transition-colors duration-75
+							{dragOverBreadcrumb === seg.path ? 'text-gray-900 dark:text-white bg-gray-200 dark:bg-white/10 rounded px-1 -mx-1' : 'text-gray-900 dark:text-white'}"
+						ondragover={(e) => onBreadcrumbDragOver(e, seg.path)}
+						ondragleave={onBreadcrumbDragLeave}
+						ondrop={(e) => onBreadcrumbDrop(e, seg.path)}
+					>{seg.name}</span>
+				{:else}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<button
+						class="shrink-0 transition-colors duration-75
+							{dragOverBreadcrumb === seg.path ? 'text-gray-900 dark:text-white bg-gray-200 dark:bg-white/10 rounded px-1 -mx-1' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}"
+						onclick={() => navigateTo(seg.path)}
+						ondragover={(e) => onBreadcrumbDragOver(e, seg.path)}
+						ondragleave={onBreadcrumbDragLeave}
+						ondrop={(e) => onBreadcrumbDrop(e, seg.path)}
+					>{seg.name}</button>
+				{/if}
+			{/each}
+		</div>
+
+		<!-- Refresh -->
+		<button
+			class="flex items-center justify-center w-5 h-5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 shrink-0"
+			onclick={() => fetchDirectory(cwd)}
+			use:tooltip={$t('files.refresh')}
+		>
+			<Icon name="refresh" size={11} />
+		</button>
+
+		<!-- Sort dropdown -->
+		<button
+			bind:this={sortBtnEl}
+			class="flex items-center justify-center w-5 h-5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 shrink-0"
+			onclick={() => { sortMenuOpen = !sortMenuOpen; }}
+			use:tooltip={$t('files.sort')}
+		>
+			<Icon name="sort" size={11} />
+		</button>
+
+		<!-- Three-dot menu -->
+		<button
+			bind:this={addBtnEl}
+			class="flex items-center justify-center w-5 h-5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 shrink-0"
+			onclick={() => { toggleAddMenu(); }}
+			use:tooltip={$t('files.actions')}
+		>
+			<Icon name="three-dots" size={11} />
+		</button>
+	</div>
+
+	<!-- Ports -->
+	{#if workspacePorts.length > 0}
+		<div class="flex items-center gap-1.5 h-7 px-3 border-b border-gray-200 dark:border-white/6 shrink-0">
+			<span class="text-[10px] text-gray-400 shrink-0">{$t('files.ports')}</span>
+			{#each workspacePorts as p (p.port)}
+				<button
+					class="px-1.5 py-0.5 rounded text-[11px] font-mono font-medium text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/6 transition-colors duration-75"
+					onclick={() => openPreviewTab(p.port)}
+					use:tooltip={$t('files.clickToPreview', { process: p.process })}
+				>:{p.port}</button>
+			{/each}
+		</div>
+	{/if}
+
+	<!-- Search -->
+	<div class="flex items-center gap-1.5 h-8 px-3 border-b border-gray-200 dark:border-white/6 shrink-0">
+		<Icon name="search" size={13} class="text-gray-400 shrink-0" />
+		<input
+			type="text"
+			class="flex-1 border-none outline-none bg-transparent text-xs text-gray-900 dark:text-white placeholder:text-gray-400"
+			placeholder={$t('files.filter')}
+			bind:value={searchQuery}
+		/>
+		{#if searchQuery}
+			<button class="text-gray-400 flex items-center" onclick={() => searchQuery = ''}>
+				<Icon name="xmark" size={11} />
+			</button>
+		{/if}
+	</div>
+
+	<!-- Sort bar replaced with dropdown in toolbar -->
+
+	<!-- File list -->
+	<div class="flex-1 overflow-y-auto p-1">
+		<!-- New item input -->
+		{#if showNewInput}
+			<div class="flex items-center gap-2 h-7 px-2">
+				<Icon name={showNewInput === 'folder' ? 'folder' : 'empty-page'} size={14} class="text-gray-400 shrink-0" />
+				<input
+					type="text"
+					class="flex-1 border-none outline-none bg-transparent text-xs text-gray-900 dark:text-white"
+					placeholder={showNewInput === 'folder' ? $t('files.folderNamePlaceholder') : $t('files.fileNamePlaceholder')}
+					bind:value={newName}
+					onkeydown={(e) => { if (e.key === 'Enter') confirmNew(); if (e.key === 'Escape') cancelNew(); }}
+					autofocus
+				/>
+				<button class="flex items-center justify-center w-5 h-5 rounded text-green-500 hover:bg-green-50 dark:hover:bg-green-500/10 transition-colors duration-75" onclick={confirmNew}>
+					<Icon name="check" size={12} />
+				</button>
+				<button class="flex items-center justify-center w-5 h-5 rounded text-gray-400 hover:bg-gray-100 dark:hover:bg-white/6 transition-colors duration-75" onclick={cancelNew}>
+					<Icon name="xmark" size={12} />
+				</button>
+			</div>
+		{/if}
+
+		{#if loading}
+			<div class="flex items-center justify-center py-12">
+				<div class="w-4 h-4 border-2 border-gray-300 border-t-gray-600 dark:border-gray-700 dark:border-t-gray-400 rounded-full animate-spin"></div>
+			</div>
+		{:else if error}
+			<div class="flex flex-col items-center justify-center py-12 gap-2">
+				<p class="text-xs text-red-400">{error}</p>
+				<button
+					class="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 px-3 py-1 rounded-lg bg-gray-100 dark:bg-white/6 transition-colors duration-100"
+					onclick={() => fetchDirectory(cwd)}
+				>{$t('files.retry')}</button>
+			</div>
+		{:else if sortedEntries().length === 0 && !showNewInput}
+			<div class="flex items-center justify-center py-12">
+				<p class="text-xs text-gray-400 dark:text-gray-600">
+					{searchQuery ? $t('files.noMatches') : $t('files.emptyDirectory')}
+				</p>
+			</div>
+		{:else}
+			{#each sortedEntries() as entry, i (entry.name)}
+				{#if renamingEntry === entry.name}
+					<!-- Inline rename -->
+					<div class="flex items-center gap-2 h-7 px-2">
+						<Icon name={fileIconName(entry)} size={14} class="text-gray-400 shrink-0" />
+						<input
+							type="text"
+							class="flex-1 border-none outline-none bg-transparent text-xs text-gray-900 dark:text-white"
+							bind:value={renameValue}
+							onkeydown={(e) => { if (e.key === 'Enter') confirmRename(entry.name); if (e.key === 'Escape') renamingEntry = null; }}
+							onblur={() => confirmRename(entry.name)}
+							autofocus
+						/>
+					</div>
+				{:else}
+					{@const fullPath = cwd.endsWith('/') ? cwd + entry.name : cwd + '/' + entry.name}
+					{@const isSelected = selectedPaths.has(fullPath)}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<button
+						class="group flex items-center gap-2 w-full h-7 px-2 rounded-lg text-left transition-colors duration-75
+							{isSelected ? 'bg-blue-50 dark:bg-blue-500/10' : dragOverDir === entry.name ? 'bg-blue-100 dark:bg-blue-500/20' : 'hover:bg-gray-100 dark:hover:bg-white/4'}"
+						onclick={(e) => handleClick(e, entry, i)}
+						oncontextmenu={(e) => onContextMenu(e, entry)}
+						draggable="true"
+						ondragstart={(e) => onDragStart(e, entry)}
+						ondragover={(e) => onDragOverDir(e, entry)}
+						ondragleave={onDragLeaveDir}
+						ondrop={(e) => onDropOnDir(e, entry)}
+						ondragend={onDragEnd}
+					>
+						<span class="flex items-center justify-center w-4 shrink-0 {entry.type === 'directory' ? 'text-gray-500 dark:text-gray-400' : 'text-gray-400 dark:text-gray-500'}">
+							<Icon name={fileIconName(entry)} size={14} strokeWidth={1.4} />
+						</span>
+						<span class="flex-1 text-xs text-gray-800 dark:text-gray-200 truncate">{entry.name}</span>
+						{#if entry.type !== 'directory' && entry.size !== null}
+							<span class="text-[11px] font-mono text-gray-400 dark:text-gray-600 shrink-0">{formatSize(entry.size)}</span>
+						{/if}
+						{#if entry.type === 'directory'}
+							<span class="text-gray-300 dark:text-gray-700 shrink-0 flex">
+								<Icon name="chevron-right" size={12} />
+							</span>
+						{/if}
+						<!-- Three-dot menu per entry -->
+						<span
+							class="flex items-center justify-center w-5 h-5 rounded shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/10 transition-all duration-75"
+							role="button"
+							tabindex="-1"
+							onclick={(e) => openEntryMenu(e, entry)}
+							onkeydown={(e) => { if (e.key === 'Enter') openEntryMenu(e, entry); }}
+							aria-label={$t('files.moreActions')}
+						>
+							<Icon name="three-dots" size={12} />
+						</span>
+					</button>
+				{/if}
+			{/each}
+		{/if}
+	</div>
+
+	<!-- Upload dropzone overlay -->
+	{#if dropzoneActive}
+		<div class="absolute inset-0 bg-blue-500/10 border-2 border-dashed border-blue-400 dark:border-blue-500 rounded-lg flex items-center justify-center z-10 pointer-events-none">
+			<p class="text-xs font-medium text-blue-500 dark:text-blue-400">{$t('files.dropToUpload')}</p>
+		</div>
+	{/if}
+
+	<!-- Multi-select action bar -->
+	{#if selectedPaths.size > 0}
+		<div class="flex items-center justify-between h-8 px-2 border-t border-gray-200 dark:border-white/6 shrink-0 bg-blue-50 dark:bg-blue-500/5">
+			<span class="text-[11px] font-medium text-blue-600 dark:text-blue-400">{$t('files.selected', { count: selectedPaths.size })}</span>
+			<div class="flex items-center gap-1">
+				<button
+					class="text-[11px] px-2 py-0.5 rounded text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors duration-75"
+					onclick={selectAll}
+				>{$t('files.all')}</button>
+				<button
+					class="text-[11px] px-2 py-0.5 rounded text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors duration-75"
+					onclick={archiveSelected}
+					use:tooltip={$t('files.downloadAsZip')}
+				><Icon name="download" size={12} /></button>
+				<button
+					class="text-[11px] px-2 py-0.5 rounded text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors duration-75"
+					onclick={deleteSelected}
+					use:tooltip={$t('files.deleteSelected')}
+				><Icon name="trash" size={12} /></button>
+				<button
+					class="text-[11px] px-2 py-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-75"
+					onclick={clearSelection}
+				><Icon name="xmark" size={11} /></button>
+			</div>
+		</div>
+	{/if}
+</div>
+
+{#if sortMenuOpen && sortBtnEl}
+	<DropdownMenu
+		anchor={sortBtnEl}
+		items={[
+			{ label: $t('files.name'), icon: sortBy === 'name' ? (sortDir === 'asc' ? 'chevron-up' : 'chevron-down') : undefined, active: sortBy === 'name', onclick: () => toggleSort('name') },
+			{ label: $t('files.size'), icon: sortBy === 'size' ? (sortDir === 'asc' ? 'chevron-up' : 'chevron-down') : undefined, active: sortBy === 'size', onclick: () => toggleSort('size') },
+			{ label: $t('files.date'), icon: sortBy === 'modified' ? (sortDir === 'asc' ? 'chevron-up' : 'chevron-down') : undefined, active: sortBy === 'modified', onclick: () => toggleSort('modified') },
+		]}
+		onclose={() => sortMenuOpen = false}
+	/>
+{/if}
+
+{#if addMenuOpen && addBtnEl}
+	<DropdownMenu
+		anchor={addBtnEl}
+		items={[
+			{ label: $t('files.newFile'), icon: 'plus', onclick: () => startNew('file') },
+			{ label: $t('files.newFolder'), icon: 'folder', onclick: () => startNew('folder') },
+			{ label: '', divider: true, onclick: () => {} },
+			{ label: $t('files.uploadFile'), icon: 'upload', onclick: () => handleUploadFromMenu() },
+			{ label: '', divider: true, onclick: () => {} },
+			{ label: showHidden ? $t('files.hideHidden') : $t('files.showHidden'), icon: 'eye', onclick: () => toggleHidden() },
+		]}
+		onclose={() => addMenuOpen = false}
+	/>
+{/if}
+
+{#if contextMenu}
+	<DropdownMenu
+		anchor={contextMenu.anchor ?? { x: contextMenu.x, y: contextMenu.y }}
+		items={[
+			{ label: $t('files.rename'), icon: 'pencil', onclick: () => startRename(contextMenu!.entry) },
+			...(contextMenu.entry.type !== 'directory'
+				? [{ label: $t('files.download'), icon: 'download', onclick: () => downloadEntry(contextMenu!.entry) }]
+				: []),
+			{ label: $t('files.delete'), icon: 'xmark', onclick: () => deleteEntry(contextMenu!.entry) },
+		]}
+		onclose={closeMenu}
+	/>
+{/if}

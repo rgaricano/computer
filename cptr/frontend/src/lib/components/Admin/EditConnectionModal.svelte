@@ -1,0 +1,151 @@
+<script lang="ts">
+	import { toast } from 'svelte-sonner';
+	import Modal from '../Modal.svelte';
+	import { updateConnection, deleteConnection, verifyConnection, type Connection } from '$lib/apis/admin';
+	import { ApiError } from '$lib/apis';
+	import { refreshChatState } from '$lib/stores/chat';
+	import { t } from '$lib/i18n';
+
+	interface Props {
+		connection: Connection;
+		onclose: () => void;
+		onchanged: () => void;
+	}
+
+	let { connection, onclose, onchanged }: Props = $props();
+
+	let formName = $state(connection.name || '');
+	let formProvider = $state<'anthropic' | 'openai'>(connection.provider === 'openai' ? 'openai' : 'anthropic');
+	let formApiType = $state<'chat_completions' | 'responses'>(connection.api_type === 'responses' ? 'responses' : 'chat_completions');
+	let formBaseUrl = $state(connection.base_url || '');
+	let formApiKey = $state('');
+	let formPrefixId = $state(connection.prefix_id || '');
+	let formModels = $state(connection.data?.models?.join(', ') || '');
+	let saving = $state(false);
+	let verifying = $state(false);
+
+	async function save() {
+		if (!formBaseUrl.trim()) { toast.error($t('connections.fieldsRequired')); return; }
+		saving = true;
+		try {
+			const models = formModels.trim()
+				? formModels.split(',').map(m => m.trim()).filter(Boolean)
+				: undefined;
+			const name = formName.trim() || (() => {
+				try { return new URL(formBaseUrl.trim()).hostname; } catch { return formProvider; }
+			})();
+
+			const updates: Record<string, unknown> = {
+				name,
+				provider: formProvider,
+				api_type: formProvider === 'openai' ? formApiType : 'chat_completions',
+				prefix_id: formPrefixId.trim() || null,
+				base_url: formBaseUrl.trim(),
+				models,
+			};
+			if (formApiKey.trim()) {
+				updates.api_key = formApiKey.trim();
+			}
+
+			await updateConnection(connection.id, updates as any);
+			toast.success($t('connections.updated') || 'Connection updated');
+			refreshChatState();
+			onchanged();
+		} catch (e) {
+			toast.error(e instanceof ApiError ? e.message : ($t('connections.addError') || 'Failed'));
+		} finally { saving = false; }
+	}
+
+	async function handleDelete() {
+		try {
+			await deleteConnection(connection.id);
+			toast.success($t('connections.deleted'));
+			refreshChatState();
+			onchanged();
+		} catch (e) {
+			toast.error(e instanceof ApiError ? e.message : $t('connections.deleteError'));
+		}
+	}
+
+	async function handleVerify() {
+		verifying = true;
+		try {
+			const res = await verifyConnection(connection.id);
+			if (res.ok) toast.success(res.message || $t('connections.verified'));
+			else toast.error(res.message || $t('connections.failed'));
+		} catch (e: any) {
+			toast.error(e.message || $t('connections.failed'));
+		} finally { verifying = false; }
+	}
+</script>
+
+<Modal {onclose} class="w-full max-w-md mx-4">
+	<div class="p-4">
+		<h2 class="text-sm font-medium text-gray-900 dark:text-white mb-3">{$t('connections.edit') || 'Edit Connection'}</h2>
+
+		<div class="flex gap-3">
+			<div class="flex-1">
+				<label class="text-[10px] text-gray-400 dark:text-gray-600">{$t('connections.name')}</label>
+				<input type="text" placeholder="Optional" bind:value={formName} autofocus autocomplete="off" spellcheck="false"
+					class="block w-full bg-transparent text-[13px] text-gray-700 dark:text-gray-300 placeholder:text-gray-300 dark:placeholder:text-gray-700 outline-none py-0.5" />
+			</div>
+			<div class="w-28 shrink-0">
+				<label class="text-[10px] text-gray-400 dark:text-gray-600">Provider</label>
+				<select bind:value={formProvider}
+					class="block w-full bg-transparent text-[13px] text-gray-700 dark:text-gray-300 outline-none py-0.5 cursor-pointer">
+					<option value="anthropic">Anthropic</option>
+					<option value="openai">OpenAI</option>
+				</select>
+			</div>
+		</div>
+
+		{#if formProvider === 'openai'}
+			<label class="text-[10px] text-gray-400 dark:text-gray-600 mt-2">API Type</label>
+			<select bind:value={formApiType}
+				class="block w-full bg-transparent text-[13px] text-gray-700 dark:text-gray-300 outline-none py-0.5 cursor-pointer">
+				<option value="chat_completions">Chat Completions</option>
+				<option value="responses">Responses</option>
+			</select>
+		{/if}
+
+		<label class="text-[10px] text-gray-400 dark:text-gray-600 mt-2">{$t('connections.baseUrl')}</label>
+		<input type="text" placeholder="https://api.openai.com/v1" bind:value={formBaseUrl} autocomplete="off" spellcheck="false"
+			class="block w-full bg-transparent text-[13px] text-gray-700 dark:text-gray-300 placeholder:text-gray-300 dark:placeholder:text-gray-700 outline-none py-0.5 font-mono" />
+
+		<label class="text-[10px] text-gray-400 dark:text-gray-600 mt-2">{$t('connections.apiKey')}</label>
+		<input type="password" placeholder="••••••••  (leave blank to keep)" bind:value={formApiKey} autocomplete="off"
+			class="block w-full bg-transparent text-[13px] text-gray-700 dark:text-gray-300 placeholder:text-gray-300 dark:placeholder:text-gray-700 outline-none py-0.5 font-mono" />
+
+		<label class="text-[10px] text-gray-400 dark:text-gray-600 mt-2">{$t('connections.prefixId')}</label>
+		<input type="text" placeholder="e.g. openrouter" bind:value={formPrefixId} autocomplete="off" spellcheck="false"
+			class="block w-full bg-transparent text-[13px] text-gray-700 dark:text-gray-300 placeholder:text-gray-300 dark:placeholder:text-gray-700 outline-none py-0.5 font-mono" />
+
+		<label class="text-[10px] text-gray-400 dark:text-gray-600 mt-2">{$t('connections.models')}</label>
+		<input type="text" placeholder="claude-sonnet-4-20250514, claude-opus-4-20250514" bind:value={formModels} autocomplete="off" spellcheck="false"
+			class="block w-full bg-transparent text-[13px] text-gray-700 dark:text-gray-300 placeholder:text-gray-300 dark:placeholder:text-gray-700 outline-none py-0.5 font-mono" />
+
+		<div class="flex items-center justify-between mt-3">
+			<div class="flex items-center gap-3">
+				<button class="text-[13px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100"
+					onclick={handleDelete}>{$t('admin.delete') || 'Delete'}</button>
+				<button class="text-[13px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 disabled:opacity-30"
+					disabled={verifying}
+					onclick={handleVerify}>
+					{#if verifying}
+						<div class="w-3 h-3 border border-gray-300 border-t-gray-600 dark:border-gray-700 dark:border-t-gray-400 rounded-full animate-spin"></div>
+					{:else}
+						{$t('connections.verify') || 'Verify'}
+					{/if}
+				</button>
+			</div>
+			<button disabled={saving || !formBaseUrl.trim()} onclick={save}
+				class="text-[13px] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors duration-100 disabled:opacity-30 disabled:pointer-events-none">
+				{#if saving}
+					<div class="w-3.5 h-3.5 border-2 border-gray-300 border-t-gray-600 dark:border-gray-700 dark:border-t-gray-400 rounded-full animate-spin"></div>
+				{:else}
+					{$t('settings.save') || 'Save'} →
+				{/if}
+			</button>
+		</div>
+	</div>
+</Modal>

@@ -1,0 +1,200 @@
+<script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
+	import panzoom, { type PanZoom } from 'panzoom';
+
+	interface Props {
+		src: string;
+		alt?: string;
+	}
+
+	let { src, alt = '' }: Props = $props();
+
+	let containerEl: HTMLDivElement | undefined = $state();
+	let contentEl: HTMLDivElement | undefined = $state();
+	let pzInstance: PanZoom | null = null;
+	let zoomLevel = $state(1);
+
+	function initPanzoom() {
+		if (!contentEl) return;
+		pzInstance?.dispose();
+
+		pzInstance = panzoom(contentEl, {
+			bounds: true,
+			boundsPadding: 0.1,
+			zoomSpeed: 0.065,
+			smoothScroll: false,
+			beforeWheel(e) {
+				// Only zoom on pinch (ctrl/meta); let normal scroll pass through
+				if (!e.ctrlKey && !e.metaKey) return true;
+				return false;
+			},
+			beforeMouseDown() {
+				// Only drag-to-pan when zoomed in
+				const transform = pzInstance?.getTransform();
+				if (transform && Math.abs(transform.scale - 1) < 0.01) return true;
+				return false;
+			}
+		});
+
+		pzInstance.on('zoom', () => {
+			zoomLevel = pzInstance?.getTransform()?.scale ?? 1;
+		});
+	}
+
+	function zoomIn() {
+		if (!pzInstance || !containerEl) return;
+		const cx = containerEl.clientWidth / 2;
+		const cy = containerEl.clientHeight / 2;
+		pzInstance.zoomTo(cx, cy, 1.25);
+		zoomLevel = pzInstance.getTransform().scale;
+	}
+
+	function zoomOut() {
+		if (!pzInstance || !containerEl) return;
+		const cx = containerEl.clientWidth / 2;
+		const cy = containerEl.clientHeight / 2;
+		pzInstance.zoomTo(cx, cy, 0.8);
+		zoomLevel = pzInstance.getTransform().scale;
+	}
+
+	function resetView() {
+		if (!pzInstance) return;
+		pzInstance.moveTo(0, 0);
+		pzInstance.zoomAbs(0, 0, 1);
+		zoomLevel = 1;
+	}
+
+	onMount(() => {
+		initPanzoom();
+	});
+
+	onDestroy(() => {
+		pzInstance?.dispose();
+		pzInstance = null;
+	});
+</script>
+
+<div class="image-preview" bind:this={containerEl}>
+	<div class="image-content" bind:this={contentEl}>
+		<img {src} {alt} draggable="false" />
+	</div>
+
+	<div class="zoom-toolbar">
+		<button class="zoom-btn" onclick={zoomOut} aria-label="Zoom out">
+			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+				<path fill-rule="evenodd" d="M4 10a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H4.75A.75.75 0 0 1 4 10Z" clip-rule="evenodd" />
+			</svg>
+		</button>
+		<button class="zoom-level" onclick={resetView} aria-label="Reset zoom">
+			{Math.round(zoomLevel * 100)}%
+		</button>
+		<button class="zoom-btn" onclick={zoomIn} aria-label="Zoom in">
+			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+				<path d="M10.75 4.75a.75.75 0 0 0-1.5 0v4.5h-4.5a.75.75 0 0 0 0 1.5h4.5v4.5a.75.75 0 0 0 1.5 0v-4.5h4.5a.75.75 0 0 0 0-1.5h-4.5v-4.5Z" />
+			</svg>
+		</button>
+	</div>
+</div>
+
+<style>
+	@reference "../../../app.css";
+
+	.image-preview {
+		position: relative;
+		width: 100%;
+		height: 100%;
+		overflow: hidden;
+		background: repeating-conic-gradient(
+			var(--color-gray-100) 0% 25%,
+			transparent 0% 50%
+		) 50% / 16px 16px;
+	}
+
+	:global(.dark) .image-preview {
+		background: repeating-conic-gradient(
+			rgba(255, 255, 255, 0.04) 0% 25%,
+			transparent 0% 50%
+		) 50% / 16px 16px;
+	}
+
+	.image-content {
+		width: 100%;
+		height: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.image-content img {
+		max-width: 100%;
+		max-height: 100%;
+		object-fit: contain;
+		padding: 12px;
+		user-select: none;
+	}
+
+	.zoom-toolbar {
+		position: absolute;
+		bottom: 12px;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		padding: 2px;
+		border-radius: 8px;
+		background: rgba(255, 255, 255, 0.9);
+		backdrop-filter: blur(8px);
+		border: 1px solid rgba(0, 0, 0, 0.08);
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+	}
+
+	:global(.dark) .zoom-toolbar {
+		background: rgba(30, 30, 30, 0.9);
+		border-color: rgba(255, 255, 255, 0.1);
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+	}
+
+	.zoom-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		color: var(--color-gray-500);
+		transition: all 0.1s;
+	}
+
+	.zoom-btn:hover {
+		background: rgba(0, 0, 0, 0.06);
+		color: var(--color-gray-700);
+	}
+
+	:global(.dark) .zoom-btn:hover {
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--color-gray-300);
+	}
+
+	.zoom-level {
+		min-width: 48px;
+		padding: 4px 6px;
+		font-size: 11px;
+		font-weight: 500;
+		text-align: center;
+		color: var(--color-gray-500);
+		border-radius: 6px;
+		font-variant-numeric: tabular-nums;
+		transition: all 0.1s;
+	}
+
+	.zoom-level:hover {
+		background: rgba(0, 0, 0, 0.06);
+		color: var(--color-gray-700);
+	}
+
+	:global(.dark) .zoom-level:hover {
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--color-gray-300);
+	}
+</style>

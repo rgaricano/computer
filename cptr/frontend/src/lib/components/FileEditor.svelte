@@ -1,0 +1,1011 @@
+<script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
+	import { markTabUnsaved, updateTabFilePath, activeWorkspace } from '$lib/stores';
+	import { get } from 'svelte/store';
+	import { tooltip } from '$lib/tooltip';
+	import { readFile, writeFile } from '$lib/apis/files';
+	import { getGitDiff, getGitStatus } from '$lib/apis/git';
+	import Icon from './Icon.svelte';
+	import SaveDialog from './SaveDialog.svelte';
+	import type RichTextEditorType from './markdown/RichTextEditor.svelte';
+	import MarkdownRenderer from './markdown/MarkdownRenderer.svelte';
+	import ImagePreview from './preview/ImagePreview.svelte';
+	import PDFViewer from './preview/PDFViewer.svelte';
+	import JsonTreeView from './preview/JsonTreeView.svelte';
+	import CsvTable from './preview/CsvTable.svelte';
+	import SqliteView from './preview/SqliteView.svelte';
+	import HtmlPreview from './preview/HtmlPreview.svelte';
+	import SvgPreview from './preview/SvgPreview.svelte';
+	import OfficePreview from './preview/OfficePreview.svelte';
+	import { EditorState } from '@codemirror/state';
+	import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, highlightActiveLine, rectangularSelection } from '@codemirror/view';
+	import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+	import { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, foldGutter, foldKeymap } from '@codemirror/language';
+	import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
+	import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+	import { oneDark } from '@codemirror/theme-one-dark';
+
+	import { javascript } from '@codemirror/lang-javascript';
+	import { python } from '@codemirror/lang-python';
+	import { json } from '@codemirror/lang-json';
+	import { css } from '@codemirror/lang-css';
+	import { html } from '@codemirror/lang-html';
+	import { markdown } from '@codemirror/lang-markdown';
+	import { rust } from '@codemirror/lang-rust';
+	import { cpp } from '@codemirror/lang-cpp';
+	import { java } from '@codemirror/lang-java';
+	import { sql } from '@codemirror/lang-sql';
+	import { xml } from '@codemirror/lang-xml';
+	import { yaml } from '@codemirror/lang-yaml';
+
+	interface Props {
+		filePath: string;
+		tabId: string;
+	}
+
+	let { filePath, tabId }: Props = $props();
+
+	interface FileData {
+		path: string;
+		name: string;
+		size: number;
+		binary: boolean;
+		content: string | null;
+		language: string | null;
+	}
+
+	// ── File type detection ──────────────────────────────────────
+	const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'avif', 'tiff']);
+	const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'ogv', 'avi', 'mkv']);
+	const AUDIO_EXTS = new Set(['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac', 'opus', 'wma']);
+	const PDF_EXTS = new Set(['pdf']);
+	const CSV_EXTS = new Set(['csv', 'tsv']);
+	const SQLITE_EXTS = new Set(['sqlite', 'sqlite3', 'db', 'db3']);
+	const OFFICE_EXTS = new Set(['docx', 'xlsx', 'xls', 'pptx']);
+
+	function getExt(path: string): string {
+		return path.split('.').pop()?.toLowerCase() ?? '';
+	}
+
+	let ext = $derived(getExt(filePath));
+	let isImage = $derived(IMAGE_EXTS.has(ext));
+	let isVideo = $derived(VIDEO_EXTS.has(ext));
+	let isAudio = $derived(AUDIO_EXTS.has(ext));
+	let isPdf = $derived(PDF_EXTS.has(ext));
+	let isCsv = $derived(CSV_EXTS.has(ext));
+	let isTsv = $derived(ext === 'tsv');
+	let isJson = $derived(ext === 'json' || ext === 'jsonc' || ext === 'json5');
+	let isMarkdown = $derived(ext === 'md' || ext === 'markdown' || ext === 'mdx');
+	let isSvg = $derived(ext === 'svg');
+	let isHtml = $derived(ext === 'html' || ext === 'htm');
+	let isSqlite = $derived(SQLITE_EXTS.has(ext));
+	let isOffice = $derived(OFFICE_EXTS.has(ext));
+	let isBinaryPreview = $derived(isImage || isVideo || isAudio || isPdf || isSqlite || isOffice);
+
+	// ── State ────────────────────────────────────────────────────
+	let editorEl: HTMLDivElement | undefined = $state();
+	let view: EditorView | null = null;
+	let fileData = $state<FileData | null>(null);
+	let loading = $state(false);
+	let error = $state<string | null>(null);
+	let saving = $state(false);
+	let saved = $state(false);
+	let hasChanges = $state(false);
+	let showSaveDialog = $state(false);
+
+	// Detect untitled files
+	let isUntitled = $derived(filePath.startsWith('untitled:'));
+
+	// Binary preview state
+	let binaryUrl = $state<string | null>(null);
+
+	// Markdown mode: preview (read-only), editor (WYSIWYG), raw (CodeMirror source)
+	type MarkdownMode = 'preview' | 'editor' | 'raw';
+	let markdownMode = $state<MarkdownMode>('preview');
+
+	// Rich text editor — lazy loaded
+	let RichTextEditor: typeof RichTextEditorType | null = $state(null);
+	let richTextRef: { getMarkdown: () => string; getEditor: () => any } | undefined = $state();
+
+	// HTML/SVG preview mode
+	let previewMode = $state(true);
+
+	// JSON tree view
+	let jsonData = $state<unknown>(null);
+	let jsonParseError = $state(false);
+	let jsonViewMode = $state<'tree' | 'source'>('tree');
+
+	// Diff mode
+	type DiffLine = { type: 'added' | 'removed' | 'context'; content: string };
+	type DiffHunk = { header: string; lines: DiffLine[] };
+	type DiffFileEntry = { path: string; hunks: DiffHunk[] };
+	type NumberedLine = DiffLine & { oldNumber: number | null; newNumber: number | null };
+	type LineGroup = { type: DiffLine['type']; lines: NumberedLine[] };
+	let diffMode = $state(false);
+	let diffFiles = $state<DiffFileEntry[]>([]);
+	let diffLoading = $state(false);
+	let hasGitChanges = $state(false);
+
+	function diffHunkStart(header: string): { oldStart: number; newStart: number } {
+		const match = header.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+		return { oldStart: match ? Number(match[1]) : 0, newStart: match ? Number(match[2]) : 0 };
+	}
+
+	function diffNumberedLines(hunk: DiffHunk): NumberedLine[] {
+		let { oldStart, newStart } = diffHunkStart(hunk.header);
+		return hunk.lines.map((line) => {
+			if (line.type === 'added') return { ...line, oldNumber: null, newNumber: newStart++ };
+			if (line.type === 'removed') return { ...line, oldNumber: oldStart++, newNumber: null };
+			return { ...line, oldNumber: oldStart++, newNumber: newStart++ };
+		});
+	}
+
+	function diffGroupLines(lines: NumberedLine[]): LineGroup[] {
+		const groups: LineGroup[] = [];
+		for (const line of lines) {
+			const last = groups[groups.length - 1];
+			if (last && last.type === line.type) last.lines.push(line);
+			else groups.push({ type: line.type, lines: [line] });
+		}
+		return groups;
+	}
+
+	function diffBlockClass(type: DiffLine['type']): string {
+		if (type === 'added') return 'bg-green-100 border-l-[3px] border-l-green-500 dark:bg-green-500/15 dark:border-l-green-400';
+		if (type === 'removed') return 'bg-red-100 border-l-[3px] border-l-red-400 dark:bg-red-500/15 dark:border-l-red-400';
+		return '';
+	}
+
+	function diffTextClass(type: DiffLine['type']): string {
+		if (type === 'added') return 'text-green-900 dark:text-green-300';
+		if (type === 'removed') return 'text-red-900 dark:text-red-300';
+		return 'text-gray-600 dark:text-gray-400';
+	}
+
+	function diffPrefixClass(type: DiffLine['type']): string {
+		if (type === 'added') return 'text-green-600 dark:text-green-400';
+		if (type === 'removed') return 'text-red-500 dark:text-red-400';
+		return 'text-gray-400 dark:text-gray-600';
+	}
+
+	function diffPrefix(type: DiffLine['type']): string {
+		if (type === 'added') return '+';
+		if (type === 'removed') return '-';
+		return ' ';
+	}
+
+	// Editing state — true when the code editor should be active
+	let isEditing = $derived(
+		fileData && !fileData.binary && !isBinaryPreview && !isCsv && (
+			isMarkdown ? markdownMode === 'raw' :
+			(isHtml || isSvg) ? !previewMode :
+			isJson ? (jsonViewMode === 'source' || jsonParseError) :
+			true
+		)
+	);
+
+	// ── Language support ─────────────────────────────────────────
+	function getLanguageExtension(lang: string | null) {
+		switch (lang) {
+			case 'javascript': return javascript();
+			case 'typescript': return javascript({ typescript: true });
+			case 'jsx': return javascript({ jsx: true });
+			case 'tsx': return javascript({ jsx: true, typescript: true });
+			case 'python': return python();
+			case 'json': return json();
+			case 'css': return css();
+			case 'html': return html();
+			case 'svelte': return html();
+			case 'markdown': return markdown();
+			case 'rust': return rust();
+			case 'c': case 'cpp': return cpp();
+			case 'java': case 'kotlin': return java();
+			case 'sql': return sql();
+			case 'xml': return xml();
+			case 'yaml': return yaml();
+			default: return [];
+		}
+	}
+
+	// ── File loading ─────────────────────────────────────────────
+	let loadedPath = '';
+
+	$effect(() => {
+		if (filePath && filePath !== loadedPath) {
+			loadedPath = filePath;
+			if (filePath.startsWith('untitled:')) {
+				initUntitledFile();
+			} else {
+				loadFile(filePath);
+			}
+		}
+	});
+
+	function initUntitledFile() {
+		loading = false;
+		error = null;
+		hasChanges = false;
+		saved = false;
+		fileData = {
+			path: filePath,
+			name: filePath.replace('untitled:', ''),
+			size: 0,
+			binary: false,
+			content: '',
+			language: null,
+		};
+		requestAnimationFrame(() => initEditor('', null));
+	}
+
+	async function loadFile(path: string) {
+		loading = true;
+		error = null;
+		hasChanges = false;
+		saved = false;
+		previewMode = true;
+		markdownMode = 'preview';
+		jsonViewMode = 'tree';
+		jsonData = null;
+		jsonParseError = false;
+		diffMode = false;
+		diffFiles = [];
+		hasGitChanges = false;
+		destroyEditor();
+		revokeBinaryUrl();
+
+		try {
+			// Binary files: just build the view URL, don't fetch content
+			if (isBinaryPreview) {
+				binaryUrl = `/api/workspace/files/view?path=${encodeURIComponent(path)}`;
+				// Still fetch metadata
+				const res = await readFile(path);
+				if (res.ok) {
+					fileData = await res.json();
+				} else {
+					fileData = { path, name: path.split('/').pop() ?? '', size: 0, binary: true, content: null, language: null };
+				}
+			} else {
+				// Text files
+				const res = await readFile(path);
+				if (!res.ok) {
+					const body = await res.json().catch(() => ({}));
+					throw new Error(body.detail || `Error ${res.status}`);
+				}
+				fileData = await res.json();
+
+				if (fileData && !fileData.binary && fileData.content !== null) {
+					if (isMarkdown) {
+						// Preview handled by MarkdownRenderer component
+					} else if (isJson) {
+						try {
+							jsonData = JSON.parse(fileData.content);
+						} catch {
+							jsonParseError = true;
+							requestAnimationFrame(() => initEditor(fileData!.content!, fileData!.language));
+						}
+					} else if (isCsv) {
+						// Handled by its component, no editor needed
+					} else if (isSvg || isHtml) {
+						// Start in preview mode — editor created on toggle
+						previewMode = true;
+					} else {
+						requestAnimationFrame(() => initEditor(fileData!.content!, fileData!.language));
+					}
+				}
+			}
+		} catch (e: any) {
+			error = e.message || 'Failed to load file';
+			fileData = null;
+		} finally {
+			loading = false;
+		}
+
+		// Check git status for this file (non-blocking)
+		if (!isUntitled && !isBinaryPreview) {
+			try {
+				const ws = get(activeWorkspace);
+				if (ws) {
+					const status = await getGitStatus(ws.path) as { is_repo?: boolean; files?: { path: string }[] };
+					if (status?.is_repo && status.files) {
+						const relPath = path.startsWith(ws.path)
+							? path.slice(ws.path.replace(/\/$/, '').length + 1)
+							: path;
+						hasGitChanges = status.files.some((f) => f.path === relPath);
+					}
+				}
+			} catch {}
+		}
+	}
+
+	function revokeBinaryUrl() {
+		// Object URLs would need revoking; query-string URLs don't
+		binaryUrl = null;
+	}
+
+	function togglePreview() {
+		previewMode = !previewMode;
+		if (!previewMode && fileData?.content !== null) {
+			requestAnimationFrame(() => initEditor(fileData!.content!, fileData!.language));
+		} else if (previewMode) {
+			if (view) {
+				const content = view.state.doc.toString();
+				fileData!.content = content;
+			}
+			destroyEditor();
+		}
+	}
+
+	async function toggleDiff() {
+		if (diffMode) {
+			diffMode = false;
+			diffFiles = [];
+			// Restore editor if it was a text file
+			if (fileData && !fileData.binary && !isBinaryPreview && !isCsv && !isMarkdown && !(isHtml || isSvg) && !(isJson && !jsonParseError)) {
+				requestAnimationFrame(() => initEditor(fileData!.content!, fileData!.language));
+			}
+			return;
+		}
+
+		diffMode = true;
+		diffLoading = true;
+		destroyEditor();
+
+		try {
+			const ws = get(activeWorkspace);
+			if (!ws) throw new Error('No workspace');
+			const relPath = filePath.startsWith(ws.path)
+				? filePath.slice(ws.path.replace(/\/$/, '').length + 1)
+				: filePath;
+			const params = new URLSearchParams({ root: ws.path, file: relPath, staged: 'false' });
+			const d = await getGitDiff(params.toString()) as { files?: DiffFileEntry[] };
+			diffFiles = d.files ?? [];
+		} catch {
+			diffFiles = [];
+		} finally {
+			diffLoading = false;
+		}
+	}
+
+	// ── Markdown mode switching ─────────────────────────────────
+	async function enterEditMode() {
+		if (!RichTextEditor) {
+			const mod = await import('./markdown/RichTextEditor.svelte');
+			RichTextEditor = mod.default;
+		}
+		// Sync content from raw mode if needed
+		if (markdownMode === 'raw' && view) {
+			fileData!.content = view.state.doc.toString();
+			destroyEditor();
+		}
+		markdownMode = 'editor';
+	}
+
+	function switchMarkdownMode(target: MarkdownMode) {
+		// Capture current content before switching
+		if (markdownMode === 'editor' && richTextRef) {
+			fileData!.content = richTextRef.getMarkdown();
+		} else if (markdownMode === 'raw' && view) {
+			fileData!.content = view.state.doc.toString();
+			destroyEditor();
+		}
+
+		if (target === 'editor') {
+			enterEditMode();
+			return;
+		}
+
+		markdownMode = target;
+
+		if (target === 'raw') {
+			requestAnimationFrame(() => initEditor(fileData!.content!, 'markdown'));
+		}
+	}
+
+	// ── JSON toggle ──────────────────────────────────────────────
+	function toggleJsonView() {
+		if (jsonViewMode === 'tree') {
+			jsonViewMode = 'source';
+			requestAnimationFrame(() => initEditor(fileData!.content!, fileData!.language));
+		} else {
+			jsonViewMode = 'tree';
+			if (view) {
+				const content = view.state.doc.toString();
+				fileData!.content = content;
+				try {
+					jsonData = JSON.parse(content);
+					jsonParseError = false;
+				} catch {
+					jsonParseError = true;
+				}
+			}
+			destroyEditor();
+		}
+	}
+
+	// ── CodeMirror ───────────────────────────────────────────────
+	function isDarkMode(): boolean {
+		return document.documentElement.classList.contains('dark');
+	}
+
+	let themeObserver: MutationObserver | null = null;
+
+	function initEditor(content: string, language: string | null) {
+		if (!editorEl) return;
+		destroyEditor();
+
+		const dark = isDarkMode();
+
+		const extensions = [
+			lineNumbers(),
+			highlightActiveLineGutter(),
+			highlightSpecialChars(),
+			history(),
+			foldGutter(),
+			drawSelection(),
+			indentOnInput(),
+			bracketMatching(),
+			closeBrackets(),
+			rectangularSelection(),
+			highlightActiveLine(),
+			highlightSelectionMatches(),
+			keymap.of([
+				...closeBracketsKeymap,
+				...defaultKeymap,
+				...searchKeymap,
+				...historyKeymap,
+				...foldKeymap,
+				indentWithTab,
+				{ key: 'Mod-s', run: () => { saveFile(); return true; } },
+			]),
+			syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+			...(dark ? [oneDark] : []),
+			EditorView.updateListener.of((update) => {
+				if (update.docChanged) {
+					hasChanges = true;
+					saved = false;
+					markTabUnsaved(tabId, true);
+				}
+			}),
+			EditorView.theme({
+				'&': {
+					height: '100%',
+					fontSize: '13px',
+					backgroundColor: dark ? '#000' : '#ffffff',
+				},
+				'.cm-scroller': { fontFamily: '"JetBrains Mono", "Fira Code", ui-monospace, monospace' },
+				'.cm-gutters': {
+					backgroundColor: dark ? '#000' : '#ffffff',
+					color: dark ? '#555' : '#999',
+					border: 'none',
+				},
+				'.cm-activeLineGutter': { backgroundColor: dark ? '#1a1a1a' : '#f3f4f6' },
+				'.cm-activeLine': { backgroundColor: dark ? '#1a1a1a' : '#f9fafb' },
+				'&.cm-focused': { outline: 'none' },
+			}),
+			getLanguageExtension(language),
+		];
+
+		const state = EditorState.create({ doc: content, extensions });
+		view = new EditorView({ state, parent: editorEl });
+
+		// Watch for theme changes and rebuild editor
+		themeObserver = new MutationObserver(() => {
+			if (view) {
+				const doc = view.state.doc.toString();
+				initEditor(doc, language);
+			}
+		});
+		themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+	}
+
+	function destroyEditor() {
+		themeObserver?.disconnect();
+		themeObserver = null;
+		view?.destroy();
+		view = null;
+	}
+
+	async function saveFile() {
+		if (!fileData) return;
+
+		// For untitled files, show Save As dialog
+		if (isUntitled) {
+			showSaveDialog = true;
+			return;
+		}
+
+		await doSaveToPath(fileData.path);
+	}
+
+	async function doSaveToPath(path: string) {
+		if (!fileData) return;
+		saving = true;
+		try {
+			let content: string;
+			if (isMarkdown && markdownMode === 'editor' && richTextRef) {
+				content = richTextRef.getMarkdown();
+			} else if (view) {
+				content = view.state.doc.toString();
+			} else {
+				content = fileData.content ?? '';
+			}
+			await writeFile(path, content);
+			hasChanges = false;
+			saved = true;
+			fileData!.content = content;
+			fileData!.path = path;
+			fileData!.name = path.split('/').pop() || path;
+			markTabUnsaved(tabId, false);
+
+			// If this was an untitled file, promote the tab to a real file
+			if (filePath.startsWith('untitled:')) {
+				updateTabFilePath(tabId, path);
+				loadedPath = path;
+			}
+
+			setTimeout(() => { saved = false; }, 2000);
+		} catch (e: any) {
+			error = e.message;
+		} finally {
+			saving = false;
+		}
+	}
+
+	function handleSaveDialogSave(fullPath: string) {
+		showSaveDialog = false;
+		doSaveToPath(fullPath);
+	}
+
+	function formatSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${(bytes / 1048576).toFixed(1)} MB`;
+	}
+
+	onDestroy(() => {
+		destroyEditor();
+		revokeBinaryUrl();
+	});
+</script>
+
+<div class="editor-container">
+	{#if fileData}
+		<!-- Universal toolbar (hidden for untitled files with no content yet) -->
+		<div class="toolbar">
+			<div class="toolbar-left">
+				<span class="file-name">{fileData.name}</span>
+				<span class="file-size">{formatSize(fileData.size)}</span>
+			</div>
+			<div class="toolbar-right">
+				{#if isMarkdown && !fileData.binary}
+					<button
+						class="toolbar-btn" class:active={markdownMode === 'preview'}
+						onclick={() => switchMarkdownMode('preview')}
+						use:tooltip={'Preview'}
+					><Icon name="eye" size={12} /></button>
+					<button
+						class="toolbar-btn" class:active={markdownMode === 'editor'}
+						onclick={() => switchMarkdownMode('editor')}
+						use:tooltip={'Editor'}
+					><Icon name="pencil" size={11} /></button>
+					<button
+						class="toolbar-btn" class:active={markdownMode === 'raw'}
+						onclick={() => switchMarkdownMode('raw')}
+						use:tooltip={'Source'}
+					><Icon name="code" size={12} /></button>
+				{:else if (isHtml || isSvg) && !fileData.binary}
+					<button
+						class="toolbar-btn" class:active={previewMode}
+						onclick={() => { if (!previewMode) togglePreview(); }}
+						use:tooltip={'Preview'}
+					><Icon name="eye" size={12} /></button>
+					<button
+						class="toolbar-btn" class:active={!previewMode}
+						onclick={() => { if (previewMode) togglePreview(); }}
+						use:tooltip={'Edit'}
+					><Icon name="pencil" size={11} /></button>
+				{/if}
+				{#if isJson && !fileData.binary && !jsonParseError}
+					<button
+						class="toolbar-btn" class:active={jsonViewMode === 'tree'}
+						onclick={() => { if (jsonViewMode !== 'tree') toggleJsonView(); }}
+						use:tooltip={'Tree view'}
+					><Icon name="list" size={12} /></button>
+					<button
+						class="toolbar-btn" class:active={jsonViewMode === 'source'}
+						onclick={() => { if (jsonViewMode !== 'source') toggleJsonView(); }}
+						use:tooltip={'Source'}
+					><Icon name="code" size={12} /></button>
+				{/if}
+			{#if isEditing || markdownMode === 'editor' || hasChanges || saving || saved}
+				<button
+					class="toolbar-btn {saved ? 'saved' : ''}"
+					onclick={saveFile}
+					disabled={saving}
+					use:tooltip={saving ? 'Saving...' : saved ? 'Saved' : 'Save'}
+				><Icon name={saved ? 'check' : 'save'} size={11} /></button>
+			{/if}
+			{#if !isUntitled && hasGitChanges}
+				<button
+					class="toolbar-btn" class:active={diffMode}
+					onclick={toggleDiff}
+					use:tooltip={diffMode ? 'Hide diff' : 'Show diff'}
+				><Icon name="git-diff" size={12} /></button>
+			{/if}
+			{#if !isUntitled}
+				<button
+					class="toolbar-btn"
+					onclick={() => loadFile(filePath)}
+					use:tooltip={'Refresh'}
+				><Icon name="refresh" size={11} /></button>
+			{/if}
+			</div>
+		</div>
+	{/if}
+
+	<div class="editor-area">
+		{#if loading}
+			<div class="state"><div class="spinner"></div></div>
+		{:else if error}
+			<div class="state error">{error}</div>
+
+		<!-- ── Binary previews ─────────────────────────────── -->
+		{:else if isImage && binaryUrl}
+			<ImagePreview src={binaryUrl} alt={fileData?.name ?? ''} />
+
+		{:else if isPdf && binaryUrl}
+			<PDFViewer src={binaryUrl} />
+
+		{:else if isVideo && binaryUrl}
+			<div class="media-container">
+				<!-- svelte-ignore a11y_media_has_caption -->
+				<video controls preload="metadata" src={binaryUrl}></video>
+			</div>
+
+		{:else if isAudio && binaryUrl}
+			<div class="media-container">
+				<audio controls preload="metadata" src={binaryUrl}></audio>
+			</div>
+
+		{:else if isSqlite && binaryUrl}
+			<SqliteView src={binaryUrl} />
+
+		{:else if isOffice && binaryUrl}
+			<OfficePreview src={binaryUrl} fileName={fileData?.name ?? ''} />
+
+		<!-- ── Rich text previews ──────────────────────────── -->
+		{:else if isSvg && fileData?.content && previewMode}
+			<SvgPreview content={fileData.content} />
+
+		{:else if isHtml && fileData?.content && previewMode}
+			<HtmlPreview content={fileData.content} filePath={filePath} />
+
+		{:else if isJson && jsonData !== null && jsonViewMode === 'tree'}
+			<div class="tree-container">
+				<JsonTreeView data={jsonData} />
+			</div>
+
+		{:else if isCsv && fileData?.content}
+			<CsvTable content={fileData.content} separator={isTsv ? '\t' : ','} />
+
+		{:else if isMarkdown && fileData?.content !== null && fileData?.content !== undefined}
+			{#if markdownMode === 'preview'}
+				<div class="markdown-preview">
+					<MarkdownRenderer content={fileData.content} />
+				</div>
+			{:else if markdownMode === 'editor' && RichTextEditor}
+				{@const wsPath = $activeWorkspace?.path ?? ''}
+				<svelte:component
+					this={RichTextEditor}
+					bind:this={richTextRef}
+					content={fileData.content}
+					filePath={fileData.path}
+					workspacePath={wsPath}
+					onchange={() => { hasChanges = true; saved = false; markTabUnsaved(tabId, true); }}
+					onsave={saveFile}
+				/>
+			{:else if markdownMode === 'raw'}
+				<div bind:this={editorEl} class="editor-el"></div>
+			{/if}
+
+		{:else if fileData?.binary}
+			<!-- Unknown binary — fallback -->
+			<div class="state">
+				<p class="state-title">Binary file</p>
+				<p class="state-sub">{fileData.name} — {formatSize(fileData.size)}</p>
+			</div>
+
+		{:else if diffMode}
+			<!-- Diff view -->
+			{#if diffLoading}
+				<div class="state"><div class="spinner"></div></div>
+			{:else if diffFiles.length === 0}
+				<div class="state">
+					<p class="state-title">No changes</p>
+					<p class="state-sub">This file has no uncommitted modifications.</p>
+				</div>
+			{:else}
+				<div class="diff-scroll">
+					{#each diffFiles as df}
+						{#each df.hunks as hunk}
+							<div class="grid w-full grid-cols-[2.75rem_2.75rem_1.25rem_auto] border-b border-gray-100 bg-gray-50 text-gray-400 dark:border-white/4 dark:bg-white/3 dark:text-gray-600 font-mono text-[11px]">
+								<span></span>
+								<span></span>
+								<span></span>
+								<code class="whitespace-pre px-2 py-0.5">{hunk.header}</code>
+							</div>
+							{#each diffGroupLines(diffNumberedLines(hunk)) as group}
+								<div class="w-full {diffBlockClass(group.type)}">
+									{#each group.lines as line}
+										<div class="grid w-full grid-cols-[2.75rem_2.75rem_1.25rem_auto] font-mono text-[11px] leading-[18px]">
+											<span class="select-none border-r border-black/5 px-2 text-right text-gray-400 dark:border-white/4 dark:text-gray-600">{line.oldNumber ?? ''}</span>
+											<span class="select-none border-r border-black/5 px-2 text-right text-gray-400 dark:border-white/4 dark:text-gray-600">{line.newNumber ?? ''}</span>
+											<span class="select-none px-1 text-center {diffPrefixClass(line.type)}">{diffPrefix(line.type)}</span>
+											<code class="whitespace-pre px-2 {diffTextClass(line.type)}">{line.content || ' '}</code>
+										</div>
+									{/each}
+								</div>
+							{/each}
+						{/each}
+					{/each}
+				</div>
+			{/if}
+
+		<!-- ┌ Code editor (default) ───────────────────── -->
+		{:else}
+			<div bind:this={editorEl} class="editor-el"></div>
+		{/if}
+
+		{#if showSaveDialog}
+			<SaveDialog
+				defaultName={fileData?.name || 'Untitled'}
+				initialDir={(() => { const ws = get(activeWorkspace); return ws?.path; })()}
+				onclose={() => showSaveDialog = false}
+				onsave={handleSaveDialogSave}
+			/>
+		{/if}
+	</div>
+</div>
+
+<style>
+	@reference "../../app.css";
+
+	.editor-container {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		overflow: hidden;
+	}
+
+	.toolbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: 30px;
+		padding: 0 10px;
+		border-bottom: 1px solid var(--color-gray-200);
+		flex-shrink: 0;
+	}
+
+	:global(.dark) .toolbar {
+		border-bottom-color: rgba(255, 255, 255, 0.06);
+	}
+
+	.toolbar-left {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.toolbar-right {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+	}
+
+	.file-name {
+		font-size: 12px;
+		font-weight: 500;
+		color: var(--color-gray-700);
+	}
+
+	:global(.dark) .file-name {
+		color: var(--color-gray-300);
+	}
+
+	.file-size {
+		font-size: 11px;
+		color: var(--color-gray-400);
+	}
+
+	.toolbar-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		border-radius: 4px;
+		color: var(--color-gray-400);
+		transition: all 0.1s;
+	}
+
+	.toolbar-btn:hover {
+		color: var(--color-gray-600);
+	}
+
+	:global(.dark) .toolbar-btn:hover {
+		color: var(--color-gray-300);
+	}
+
+	.toolbar-btn.active {
+		color: var(--color-gray-900);
+	}
+
+	:global(.dark) .toolbar-btn.active {
+		color: white;
+	}
+
+	.editor-area {
+		flex: 1;
+		overflow: hidden;
+	}
+
+	.editor-el {
+		height: 100%;
+		width: 100%;
+	}
+
+	/* ── Media containers ────────────────────────────────── */
+
+	.media-container {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		height: 100%;
+		padding: 24px;
+	}
+
+	.media-container video {
+		max-width: 100%;
+		max-height: 100%;
+		border-radius: 8px;
+		background: #000;
+	}
+
+	.media-container audio {
+		width: 100%;
+		max-width: 480px;
+	}
+
+	/* ── Tree container ──────────────────────────────────── */
+
+	.tree-container {
+		height: 100%;
+		overflow: auto;
+		padding: 8px 12px;
+	}
+
+	/* ── Markdown preview container ──────────────────────── */
+
+	.markdown-preview {
+		height: 100%;
+		width: 100%;
+		overflow-y: auto;
+		padding: 24px 32px;
+	}
+
+	/* ── States ──────────────────────────────────────────── */
+
+	.state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		height: 100%;
+		gap: 6px;
+	}
+
+	.state.error {
+		color: #ef4444;
+		font-size: 13px;
+	}
+
+	.state-title {
+		font-size: 14px;
+		font-weight: 500;
+		color: var(--color-gray-400);
+	}
+
+	.state-sub {
+		font-size: 12px;
+		color: var(--color-gray-500);
+	}
+
+	.spinner {
+		width: 20px;
+		height: 20px;
+		border: 2px solid var(--color-gray-700);
+		border-top-color: var(--color-gray-400);
+		border-radius: 50%;
+		animation: spin 0.6s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	/* ── Diff view ────────────────────────────────────────── */
+
+	.diff-scroll {
+		height: 100%;
+		overflow: auto;
+		font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+		font-size: 12px;
+		line-height: 18px;
+	}
+
+	.diff-hunk-header {
+		padding: 2px 8px;
+		color: var(--color-gray-400);
+		background: var(--color-gray-50);
+	}
+
+	:global(.dark) .diff-hunk-header {
+		background: rgba(255, 255, 255, 0.03);
+		color: var(--color-gray-600);
+	}
+
+	.diff-line {
+		padding: 0 8px;
+		white-space: pre-wrap;
+		word-break: break-all;
+	}
+
+	.diff-prefix {
+		display: inline-block;
+		width: 16px;
+		user-select: none;
+	}
+
+	.diff-added {
+		background: #dcfce7;
+		color: #14532d;
+	}
+
+	:global(.dark) .diff-added {
+		background: rgba(34, 197, 94, 0.12);
+		color: #86efac;
+	}
+
+	.diff-added .diff-prefix { color: #16a34a; }
+	:global(.dark) .diff-added .diff-prefix { color: #4ade80; }
+
+	.diff-removed {
+		background: #fee2e2;
+		color: #7f1d1d;
+	}
+
+	:global(.dark) .diff-removed {
+		background: rgba(239, 68, 68, 0.12);
+		color: #fca5a5;
+	}
+
+	.diff-removed .diff-prefix { color: #ef4444; }
+	:global(.dark) .diff-removed .diff-prefix { color: #f87171; }
+
+	.diff-ctx {
+		color: var(--color-gray-600);
+	}
+
+	:global(.dark) .diff-ctx {
+		color: var(--color-gray-400);
+	}
+
+	.diff-ctx .diff-prefix {
+		color: var(--color-gray-400);
+	}
+
+	:global(.dark) .diff-ctx .diff-prefix {
+		color: var(--color-gray-600);
+	}
+</style>

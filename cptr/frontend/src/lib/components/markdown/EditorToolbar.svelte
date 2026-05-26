@@ -1,0 +1,335 @@
+<script lang="ts">
+	import type { Editor } from '@tiptap/core';
+	import Icon from '../Icon.svelte';
+	import { tooltip } from '$lib/tooltip';
+
+	interface Props {
+		editor: Editor;
+	}
+
+	let { editor }: Props = $props();
+
+	// Reactive state — recompute on every editor transaction
+	let active = $state({
+		bold: false,
+		italic: false,
+		underline: false,
+		strike: false,
+		code: false,
+		highlight: false,
+		h1: false,
+		h2: false,
+		h3: false,
+		bulletList: false,
+		orderedList: false,
+		taskList: false,
+		blockquote: false,
+		codeBlock: false,
+	});
+
+	$effect(() => {
+		if (!editor) return;
+
+		const update = () => {
+			active = {
+				bold: editor.isActive('bold'),
+				italic: editor.isActive('italic'),
+				underline: editor.isActive('underline'),
+				strike: editor.isActive('strike'),
+				code: editor.isActive('code'),
+				highlight: editor.isActive('highlight'),
+				h1: editor.isActive('heading', { level: 1 }),
+				h2: editor.isActive('heading', { level: 2 }),
+				h3: editor.isActive('heading', { level: 3 }),
+				bulletList: editor.isActive('bulletList'),
+				orderedList: editor.isActive('orderedList'),
+				taskList: editor.isActive('taskList'),
+				blockquote: editor.isActive('blockquote'),
+				codeBlock: editor.isActive('codeBlock'),
+			};
+		};
+
+		editor.on('selectionUpdate', update);
+		editor.on('transaction', update);
+		update();
+
+		return () => {
+			editor.off('selectionUpdate', update);
+			editor.off('transaction', update);
+		};
+	});
+
+	function cmd(action: () => boolean) {
+		return () => {
+			action();
+			editor?.chain().focus().run();
+		};
+	}
+</script>
+
+<!-- Desktop: top bar. Mobile: bottom bar above keyboard -->
+<div class="editor-toolbar">
+	<div class="toolbar-scroll">
+		<!-- Text formatting -->
+		<button
+			class="tb-btn" class:active={active.bold}
+			onclick={() => editor.chain().focus().toggleBold().run()}
+			use:tooltip={'Bold (⌘B)'}
+		><strong>B</strong></button>
+
+		<button
+			class="tb-btn" class:active={active.italic}
+			onclick={() => editor.chain().focus().toggleItalic().run()}
+			use:tooltip={'Italic (⌘I)'}
+		><em>I</em></button>
+
+		<button
+			class="tb-btn" class:active={active.underline}
+			onclick={() => editor.chain().focus().toggleUnderline().run()}
+			use:tooltip={'Underline (⌘U)'}
+		><u>U</u></button>
+
+		<button
+			class="tb-btn" class:active={active.strike}
+			onclick={() => editor.chain().focus().toggleStrike().run()}
+			use:tooltip={'Strikethrough'}
+		><s>S</s></button>
+
+		<button
+			class="tb-btn" class:active={active.code}
+			onclick={() => editor.chain().focus().toggleCode().run()}
+			use:tooltip={'Inline code'}
+		><Icon name="code" size={12} /></button>
+
+		<button
+			class="tb-btn" class:active={active.highlight}
+			onclick={() => editor.chain().focus().toggleHighlight().run()}
+			use:tooltip={'Highlight'}
+		><span class="highlight-icon">H</span></button>
+
+		<span class="tb-divider"></span>
+
+		<!-- Headings -->
+		<button
+			class="tb-btn heading-btn" class:active={active.h1}
+			onclick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+			use:tooltip={'Heading 1'}
+		>H1</button>
+
+		<button
+			class="tb-btn heading-btn" class:active={active.h2}
+			onclick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+			use:tooltip={'Heading 2'}
+		>H2</button>
+
+		<button
+			class="tb-btn heading-btn" class:active={active.h3}
+			onclick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+			use:tooltip={'Heading 3'}
+		>H3</button>
+
+		<span class="tb-divider"></span>
+
+		<!-- Lists -->
+		<button
+			class="tb-btn" class:active={active.bulletList}
+			onclick={() => editor.chain().focus().toggleBulletList().run()}
+			use:tooltip={'Bullet list'}
+		><Icon name="list" size={12} /></button>
+
+		<button
+			class="tb-btn" class:active={active.orderedList}
+			onclick={() => editor.chain().focus().toggleOrderedList().run()}
+			use:tooltip={'Numbered list'}
+		><Icon name="list-ordered" size={12} /></button>
+
+		<button
+			class="tb-btn" class:active={active.taskList}
+			onclick={() => editor.chain().focus().toggleTaskList().run()}
+			use:tooltip={'Task list'}
+		><Icon name="check-square" size={12} /></button>
+
+		<span class="tb-divider"></span>
+
+		<!-- Block elements -->
+		<button
+			class="tb-btn" class:active={active.blockquote}
+			onclick={() => editor.chain().focus().toggleBlockquote().run()}
+			use:tooltip={'Quote'}
+		><Icon name="quote" size={12} /></button>
+
+		<button
+			class="tb-btn" class:active={active.codeBlock}
+			onclick={() => editor.chain().focus().toggleCodeBlock().run()}
+			use:tooltip={'Code block'}
+		>{'{ }'}</button>
+
+		<button
+			class="tb-btn"
+			onclick={() => editor.chain().focus().setHorizontalRule().run()}
+			use:tooltip={'Horizontal rule'}
+		>──</button>
+
+		<span class="tb-divider"></span>
+
+		<!-- Table -->
+		<button
+			class="tb-btn"
+			onclick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
+			use:tooltip={'Insert table'}
+		><Icon name="table" size={12} /></button>
+
+		<!-- Undo/Redo -->
+		<span class="tb-divider"></span>
+
+		<button
+			class="tb-btn"
+			onclick={() => editor.chain().focus().undo().run()}
+			disabled={!editor.can().undo()}
+			use:tooltip={'Undo (⌘Z)'}
+		><Icon name="undo" size={12} /></button>
+
+		<button
+			class="tb-btn"
+			onclick={() => editor.chain().focus().redo().run()}
+			disabled={!editor.can().redo()}
+			use:tooltip={'Redo (⌘⇧Z)'}
+		><Icon name="redo" size={12} /></button>
+	</div>
+</div>
+
+<style>
+	@reference "../../../app.css";
+
+	.editor-toolbar {
+		display: flex;
+		align-items: center;
+		height: 36px;
+		padding: 0 8px;
+		border-bottom: 1px solid var(--color-gray-200);
+		background: white;
+		flex-shrink: 0;
+		overflow: hidden;
+	}
+
+	:global(.dark) .editor-toolbar {
+		background: #000;
+		border-bottom-color: rgba(255, 255, 255, 0.06);
+	}
+
+	.toolbar-scroll {
+		display: flex;
+		align-items: center;
+		gap: 1px;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+		-ms-overflow-style: none;
+		-webkit-overflow-scrolling: touch;
+	}
+
+	.toolbar-scroll::-webkit-scrollbar {
+		display: none;
+	}
+
+	.tb-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 28px;
+		height: 28px;
+		padding: 0 6px;
+		border: none;
+		border-radius: 5px;
+		background: transparent;
+		color: var(--color-gray-500);
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.1s;
+		white-space: nowrap;
+		flex-shrink: 0;
+	}
+
+	.tb-btn:hover {
+		background: var(--color-gray-100);
+		color: var(--color-gray-700);
+	}
+
+	.tb-btn.active {
+		background: var(--color-gray-200);
+		color: var(--color-gray-900);
+	}
+
+	.tb-btn:disabled {
+		opacity: 0.3;
+		cursor: default;
+	}
+
+	:global(.dark) .tb-btn {
+		color: var(--color-gray-500);
+	}
+
+	:global(.dark) .tb-btn:hover {
+		background: rgba(255, 255, 255, 0.06);
+		color: var(--color-gray-300);
+	}
+
+	:global(.dark) .tb-btn.active {
+		background: rgba(255, 255, 255, 0.1);
+		color: white;
+	}
+
+	.heading-btn {
+		font-size: 11px;
+		font-weight: 700;
+		font-family: inherit;
+	}
+
+	.tb-divider {
+		width: 1px;
+		height: 16px;
+		background: var(--color-gray-200);
+		margin: 0 4px;
+		flex-shrink: 0;
+	}
+
+	:global(.dark) .tb-divider {
+		background: rgba(255, 255, 255, 0.08);
+	}
+
+	.highlight-icon {
+		background: rgba(255, 213, 79, 0.4);
+		border-radius: 2px;
+		padding: 0 3px;
+		font-weight: 700;
+		font-size: 11px;
+	}
+
+	/* ── Mobile: pin to bottom above keyboard ────── */
+	@media (max-width: 767px) {
+		.editor-toolbar {
+			position: fixed;
+			bottom: 0;
+			left: 0;
+			right: 0;
+			z-index: 60;
+			height: 44px;
+			padding: 0 12px;
+			border-bottom: none;
+			border-top: 1px solid var(--color-gray-200);
+			padding-bottom: env(safe-area-inset-bottom, 0);
+		}
+
+		:global(.dark) .editor-toolbar {
+			border-top-color: rgba(255, 255, 255, 0.06);
+			border-bottom: none;
+		}
+
+		.tb-btn {
+			min-width: 36px;
+			height: 36px;
+			font-size: 13px;
+		}
+	}
+</style>

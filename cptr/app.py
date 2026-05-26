@@ -1,0 +1,131 @@
+import time
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from cptr.routers import (
+    admin_router,
+    auth_router,
+    chat_router,
+    events_router,
+    files_router,
+    git_router,
+    proxy_router,
+    state_router,
+    terminal_router,
+    workspace_router,
+)
+from cptr.utils.config import check_access, load_config
+from cptr.utils.db import init_db
+
+START_TIME = time.time()
+app = FastAPI()
+
+
+@app.on_event("startup")
+async def startup():
+    await init_db()
+    from cptr.env import STARTUP_TOKEN
+    app.state.startup_token = STARTUP_TOKEN
+
+
+# Auth middleware
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # Skip auth for: auth endpoints, health, static assets, HTML pages
+    if path.startswith("/api/auth") or path == "/api/health" or path == "/api/config":
+        return await call_next(request)
+    if path.startswith("/_app/") or not path.startswith("/api/"):
+        return await call_next(request)
+    # GET /api/files/{id} is public — UUID is unguessable, <img src> can't send cookies
+    if request.method == "GET" and path.startswith("/api/files/"):
+        return await call_next(request)
+
+    client_host = request.client.host if request.client else "127.0.0.1"
+    jwt_token = request.cookies.get("cptr_session")
+
+    # Read trusted header (configurable, defaults to Remote-User)
+    header_name = load_config().get("auth", {}).get("header", "Remote-User")
+    remote_user = request.headers.get(header_name)
+
+    auth = check_access(
+        client_host=client_host,
+        jwt_token=jwt_token,
+        remote_user_header=remote_user,
+    )
+    if auth is None:
+        return JSONResponse({"error": "unauthorized"}, 401)
+
+    request.state.auth = auth
+    return await call_next(request)
+
+
+@app.get("/api/config")
+async def get_config():
+    """Public config for the frontend."""
+    from cptr.utils.config import get_auth_mode, AuthMode, has_any_user
+    from cptr.models import Config
+    from importlib.metadata import version as pkg_version
+
+    mode = get_auth_mode()
+    needs_setup = False
+    signup_enabled = False
+
+    if mode == AuthMode.PASSWORD:
+        needs_setup = not await has_any_user()
+        if not needs_setup:
+            signup_enabled = await Config.get("auth.signup_enabled") or False
+
+    try:
+        version = pkg_version("cptr")
+    except Exception:
+        version = "dev"
+
+    return {
+        "auth_mode": mode.value if hasattr(mode, 'value') else str(mode),
+        "needs_setup": needs_setup,
+        "signup_enabled": signup_enabled,
+        "version": version,
+    }
+
+
+# Routers
+app.include_router(admin_router)
+app.include_router(auth_router)
+app.include_router(chat_router)
+app.include_router(events_router)
+app.include_router(files_router)
+app.include_router(git_router)
+app.include_router(proxy_router)
+app.include_router(state_router)
+app.include_router(terminal_router)
+app.include_router(workspace_router)
+
+
+# Health
+@app.get("/api/health")
+async def health():
+    import os
+    return {"status": "ok", "uptime_seconds": int(time.time() - START_TIME), "pid": os.getpid()}
+
+
+# Frontend (unchanged)
+FRONTEND_BUILD_DIR = Path(__file__).parent / "frontend" / "build"
+if FRONTEND_BUILD_DIR.exists():
+    app.mount("/_app", StaticFiles(directory=str(FRONTEND_BUILD_DIR / "_app")), name="frontend-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        file_path = FRONTEND_BUILD_DIR / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(FRONTEND_BUILD_DIR / "index.html")
+
+
+# Socket.IO — wraps the entire ASGI app
+from cptr.socket.main import get_asgi_app
+
+application = get_asgi_app(app)
