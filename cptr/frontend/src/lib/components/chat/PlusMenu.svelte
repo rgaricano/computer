@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { toolApprovalMode, type ToolApprovalMode } from '$lib/stores';
+	import { tooltip } from '$lib/tooltip';
 
 	interface Props {
 		onfiles: (files: FileList) => void;
@@ -14,10 +15,10 @@
 	let pos = $state<{ x: number; bottom: number }>({ x: -9999, bottom: -9999 });
 	let ready = $state(false);
 
-	const modes: { value: ToolApprovalMode; label: string }[] = [
-		{ value: 'ask', label: 'Ask for approval' },
-		{ value: 'auto', label: 'Approve for me' },
-		{ value: 'full', label: 'Full access' },
+	const modes: { value: ToolApprovalMode; label: string; desc: string }[] = [
+		{ value: 'ask', label: 'Ask for approval', desc: 'Confirm each tool call before it runs' },
+		{ value: 'auto', label: 'Auto-approve', desc: 'Approve safe actions, ask for risky ones' },
+		{ value: 'full', label: 'Full access', desc: 'All tool calls run without confirmation' },
 	];
 
 	function toggle() {
@@ -116,6 +117,7 @@
 						? 'text-gray-900 dark:text-white bg-gray-50 dark:bg-white/5'
 						: 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-white'}"
 				onclick={() => selectMode(mode.value)}
+				use:tooltip={{ content: mode.desc, placement: 'right' }}
 			>
 				<span class="flex-1 text-left truncate">{mode.label}</span>
 				{#if $toolApprovalMode === mode.value}

@@ -69,6 +69,7 @@ export interface UserPreferences {
 	sidebarOpen: boolean;
 	toolApprovalMode: ToolApprovalMode;
 	locale: string;
+	workspaceOrder?: string[]; // ordered paths for sidebar drag-reorder
 }
 
 export type Theme = 'dark' | 'light' | 'system';
@@ -114,7 +115,7 @@ export const workspaceList = writable<{ path: string; name: string }[]>([]);
 /** Global user preferences. */
 export const sidebarOpen = writable(typeof window !== 'undefined' ? window.innerWidth >= 768 : false);
 export const theme = writable<Theme>('dark');
-export const toolApprovalMode = writable<ToolApprovalMode>('ask');
+export const toolApprovalMode = writable<ToolApprovalMode>('auto');
 /** @deprecated Use toolApprovalMode */
 export const autoApproveTools = {
 	subscribe: toolApprovalMode.subscribe,
@@ -124,6 +125,9 @@ export const autoApproveTools = {
 export const stateLoaded = writable(false);
 export const gitReviewOpen = writable(false);
 export const isGitRepo = writable(false);
+
+/** Saved workspace path order for sidebar drag-reorder. */
+export const workspaceOrder = writable<string[]>([]);
 
 // ── Derived stores ──────────────────────────────────────────────
 
@@ -251,6 +255,7 @@ function persistPreferences(): void {
 			sidebarOpen: get(sidebarOpen),
 			toolApprovalMode: get(toolApprovalMode),
 			locale: i18next.language,
+			workspaceOrder: get(workspaceOrder),
 		};
 		savePreferences(prefs as unknown as Record<string, unknown>).catch(() => {});
 	}, 300);
@@ -264,6 +269,7 @@ function subscribeForPersistence() {
 	theme.subscribe(() => { if (get(stateLoaded)) persistPreferences(); });
 	sidebarOpen.subscribe(() => { if (get(stateLoaded)) persistPreferences(); });
 	toolApprovalMode.subscribe(() => { if (get(stateLoaded)) persistPreferences(); });
+	workspaceOrder.subscribe(() => { if (get(stateLoaded)) persistPreferences(); });
 	i18next.on('languageChanged', () => { if (get(stateLoaded)) persistPreferences(); });
 }
 
@@ -282,6 +288,7 @@ export async function loadPreferences(): Promise<void> {
 			toolApprovalMode.set((prefs.autoApproveTools as unknown as boolean) ? 'full' : 'ask');
 		}
 		if (prefs.locale) changeLocale(prefs.locale as string);
+		if (Array.isArray(prefs.workspaceOrder)) workspaceOrder.set(prefs.workspaceOrder as string[]);
 	} catch {
 		// First run, no preferences yet
 	}
@@ -292,6 +299,12 @@ export async function loadPreferences(): Promise<void> {
 export async function loadWorkspaceList(): Promise<void> {
 	try {
 		const list = await getWorkspaceList();
+		const order = get(workspaceOrder);
+		if (order.length > 0 && list) {
+			// Sort by saved order; unknown paths go to end
+			const orderMap = new Map(order.map((p, i) => [p, i]));
+			list.sort((a, b) => (orderMap.get(a.path) ?? Infinity) - (orderMap.get(b.path) ?? Infinity));
+		}
 		workspaceList.set(list || []);
 	} catch {
 		workspaceList.set([]);
@@ -404,18 +417,37 @@ export function addWorkspace(path: string): void {
 		if (list.some((w) => w.path === path)) return list;
 		return [...list, { path, name }];
 	});
+
+	// Append to order
+	workspaceOrder.update((order) => {
+		if (order.includes(path)) return order;
+		return [...order, path];
+	});
 }
 
 export async function removeWorkspace(path: string): Promise<void> {
 	const { deleteWorkspace: deleteWs } = await import('$lib/apis/state');
 	await deleteWs(path);
 	workspaceList.update((list) => list.filter((w) => w.path !== path));
+	workspaceOrder.update((order) => order.filter((p) => p !== path));
 
 	// If this was the current workspace, clear it
 	const ws = get(currentWorkspace);
 	if (ws?.path === path) {
 		currentWorkspace.set(null);
 	}
+}
+
+/** Reorder workspaces in the sidebar (from drag-and-drop). */
+export function reorderWorkspaces(oldIndex: number, newIndex: number): void {
+	workspaceList.update((list) => {
+		const reordered = [...list];
+		const [moved] = reordered.splice(oldIndex, 1);
+		reordered.splice(newIndex, 0, moved);
+		// Sync order preference
+		workspaceOrder.set(reordered.map((w) => w.path));
+		return reordered;
+	});
 }
 
 export function updateWorkspace(partial: Partial<WorkspaceState>): void {
@@ -878,11 +910,4 @@ export function setSplitRatio(ratio: number): void {
 	currentWorkspace.update((ws) =>
 		ws ? { ...ws, splitRatio: Math.max(0.2, Math.min(0.8, ratio)) } : ws
 	);
-}
-
-// ── Workspace tab reordering (no-op now, workspaces are in sidebar list) ──
-
-export function reorderWorkspaces(_oldIndex: number, _newIndex: number): void {
-	// Workspace ordering is now managed by the server-side workspace list.
-	// This is a no-op stub to avoid breaking existing imports.
 }

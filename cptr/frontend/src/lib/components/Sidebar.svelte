@@ -5,6 +5,7 @@
 		workspaceList,
 		currentWorkspace,
 		removeWorkspace,
+		reorderWorkspaces,
 		sidebarOpen,
 	} from '$lib/stores';
 	import Sortable from 'sortablejs';
@@ -30,9 +31,14 @@
 	let appVersion = $state('');
 	let menuButtonEl: HTMLButtonElement | undefined = $state();
 	let wsListEl: HTMLDivElement | undefined = $state();
+	let sortable: Sortable | null = null;
 
 	// Current workspace path from URL
 	const currentPath = $derived($page.url.searchParams.get('workspace'));
+
+	function isTouchDevice(): boolean {
+		return typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+	}
 
 	function handleWorkspaceClick(e: MouseEvent, path: string) {
 		// Let Cmd/Ctrl+click open in new tab naturally (it's an <a>)
@@ -82,6 +88,25 @@
 		getWelcome()
 			.then(d => { appVersion = d.version || ''; })
 			.catch(() => {});
+
+		// Enable drag-reorder on non-touch devices
+		if (wsListEl && !isTouchDevice()) {
+			sortable = Sortable.create(wsListEl, {
+				animation: 150,
+				ghostClass: 'opacity-30',
+				dragClass: 'cursor-grabbing',
+				direction: 'vertical',
+				onEnd: (evt) => {
+					if (evt.oldIndex != null && evt.newIndex != null && evt.oldIndex !== evt.newIndex) {
+						reorderWorkspaces(evt.oldIndex, evt.newIndex);
+					}
+				},
+			});
+		}
+	});
+
+	onDestroy(() => {
+		sortable?.destroy();
 	});
 </script>
 
