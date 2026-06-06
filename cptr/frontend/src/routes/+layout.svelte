@@ -38,7 +38,7 @@
 	let { children } = $props();
 	let showQuickOpen = $state(false);
 	let showSettings = $state(false);
-	let viewportHeight = $state('100dvh');
+	let terminalVvHeight = $state('');
 
 	// Auth state
 	type AuthState = 'checking' | 'needs_setup' | 'needs_login' | 'authenticated';
@@ -66,20 +66,21 @@
 			30 * 60 * 1000
 		);
 
-		// iOS/Android: visualViewport gives accurate height when keyboard is open.
-		// Debounce to avoid firing dozens of resizes during the keyboard animation
-		// (~300ms). We only commit the final height after things settle, which
-		// prevents TUI apps from receiving multiple SIGWINCH and re-rendering.
+		// Terminal needs a JS height override because xterm uses a hidden
+		// textarea that doesn't trigger interactive-widget=resizes-content.
+		// Chat and other tabs use pure CSS (dvh) — no JS needed.
 		const vv = window.visualViewport;
 		let vpTimer: ReturnType<typeof setTimeout>;
 		if (vv) {
 			const update = () => {
 				clearTimeout(vpTimer);
 				vpTimer = setTimeout(() => {
-					viewportHeight = `${vv.height}px`;
+					const keyboardHeight = window.innerHeight - vv.height;
+					terminalVvHeight = keyboardHeight > 100 ? `${vv.height}px` : '';
 				}, 350);
 			};
 			vv.addEventListener('resize', update);
+
 			return () => {
 				clearTimeout(vpTimer);
 				clearInterval(healthCheck);
@@ -89,6 +90,11 @@
 
 		return () => clearInterval(healthCheck);
 	});
+
+	// Only apply JS pixel height for terminal tabs; everything else uses CSS dvh.
+	const appHeight = $derived(
+		$activeTab?.type === 'terminal' && terminalVvHeight ? terminalVvHeight : ''
+	);
 
 	let startupToken = $state('');
 
@@ -249,8 +255,8 @@
 	/>
 {:else if $stateLoaded}
 	<div
-		class="flex overflow-hidden font-sans antialiased text-gray-900 bg-white dark:text-gray-100 dark:bg-black"
-		style="height: {viewportHeight};"
+		class="h-screen max-h-[100dvh] flex overflow-hidden font-sans antialiased text-gray-900 bg-white dark:text-gray-100 dark:bg-black"
+		style={appHeight ? `height: ${appHeight};` : ''}
 	>
 		<Sidebar />
 

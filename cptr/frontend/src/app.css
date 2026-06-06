@@ -31,10 +31,24 @@
 		border-color: var(--color-gray-200, currentColor);
 	}
 
+	html,
+	body {
+		height: 100dvh;
+		margin: 0;
+		overflow: hidden;
+		overscroll-behavior: none;
+		scrollbar-width: none;
+		-ms-overflow-style: none;
+	}
+
+	html::-webkit-scrollbar,
+	body::-webkit-scrollbar {
+		display: none;
+	}
+
 	html {
 		color-scheme: dark light;
 		touch-action: manipulation;
-		overscroll-behavior: none;
 	}
 
 	button {
