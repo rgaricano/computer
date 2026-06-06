@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { activeWorkspace, openFileTab } from '$lib/stores';
 	import {
-		getGitStatus,
 		getGitLog,
 		getGitDiff,
 		getGitShow,
@@ -15,6 +14,7 @@
 		checkoutBranch,
 		createGitBranch
 	} from '$lib/apis/git';
+	import { gitStatusStore } from '$lib/stores/gitStatus.svelte';
 	import Icon from './Icon.svelte';
 	import DropdownMenu from './DropdownMenu.svelte';
 	import { tooltip } from '$lib/tooltip';
@@ -29,13 +29,6 @@
 	let view = $state<'changes' | 'history'>('changes');
 	let showDiff = $state(false);
 	let showBranches = $state(false);
-	let gitStatus = $state<{
-		is_repo: boolean;
-		branch: string;
-		ahead: number;
-		behind: number;
-		files: GitFile[];
-	} | null>(null);
 	let commits = $state<Commit[]>([]);
 	let branchData = $state<{ current: string; local: string[]; remote: string[] } | null>(null);
 	let newBranchName = $state('');
@@ -60,15 +53,14 @@
 	const allStaged = $derived(totalChanges > 0 && unstagedFiles.length === 0);
 	const someStaged = $derived(stagedFiles.length > 0 && unstagedFiles.length > 0);
 
-	$effect(() => {
-		if (workspacePath) {
-			refresh();
-			const iv = setInterval(refresh, 5000);
-			return () => clearInterval(iv);
-		} else {
-			gitStatus = null;
-		}
-	});
+	// Read from centralized store instead of independent polling
+	let gitStatus = $derived(gitStatusStore.status as {
+		is_repo: boolean;
+		branch: string;
+		ahead: number;
+		behind: number;
+		files: GitFile[];
+	} | null);
 
 	// Clear stale selection when file is no longer in the changed list
 	$effect(() => {
@@ -97,12 +89,7 @@
 	});
 
 	async function refresh() {
-		if (!workspacePath) return;
-		try {
-			gitStatus = await getGitStatus(workspacePath);
-		} catch {
-			/* silent */
-		}
+		await gitStatusStore.refresh();
 	}
 
 	async function selectFile(path: string, staged: boolean, untracked: boolean = false) {

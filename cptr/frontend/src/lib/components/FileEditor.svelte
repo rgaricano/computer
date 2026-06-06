@@ -4,7 +4,8 @@
 	import { get } from 'svelte/store';
 	import { tooltip } from '$lib/tooltip';
 	import { readFile, writeFile } from '$lib/apis/files';
-	import { getGitDiff, getGitStatus } from '$lib/apis/git';
+	import { getGitDiff } from '$lib/apis/git';
+	import { gitStatusStore } from '$lib/stores/gitStatus.svelte';
 	import Icon from './Icon.svelte';
 	import SaveDialog from './SaveDialog.svelte';
 	import type RichTextEditorType from './markdown/RichTextEditor.svelte';
@@ -356,23 +357,16 @@
 			loading = false;
 		}
 
-		// Check git status for this file (non-blocking)
+		// Check git status for this file from centralized store (non-blocking)
 		if (!isUntitled && !isBinaryPreview) {
-			try {
-				const ws = get(activeWorkspace);
-				if (ws) {
-					const status = (await getGitStatus(ws.path)) as {
-						is_repo?: boolean;
-						files?: { path: string }[];
-					};
-					if (status?.is_repo && status.files) {
-						const relPath = path.startsWith(ws.path)
-							? path.slice(ws.path.replace(/\/$/, '').length + 1)
-							: path;
-						hasGitChanges = status.files.some((f) => f.path === relPath);
-					}
-				}
-			} catch {}
+			const status = gitStatusStore.status;
+			const ws = get(activeWorkspace);
+			if (ws && status?.is_repo && status.files) {
+				const relPath = path.startsWith(ws.path)
+					? path.slice(ws.path.replace(/\/$/, '').length + 1)
+					: path;
+				hasGitChanges = status.files.some((f) => f.path === relPath);
+			}
 		}
 	}
 

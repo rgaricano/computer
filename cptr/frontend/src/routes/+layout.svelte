@@ -31,7 +31,7 @@
 	import { socketStore } from '$lib/stores/socket.svelte';
 	import { setSession, clearSession } from '$lib/session';
 	import { getSession, getConfig } from '$lib/apis/auth';
-	import { getGitStatus } from '$lib/apis/git';
+	import { gitStatusStore } from '$lib/stores/gitStatus.svelte';
 	import { t } from '$lib/i18n';
 	import { refreshChatState, bindGlobalChatListener } from '$lib/stores/chat';
 
@@ -200,32 +200,21 @@
 		}
 	});
 
-	// Detect if workspace is a git repo
+	// Drive centralized git status from workspace
 	$effect(() => {
 		const ws = $currentWorkspace;
 		if (!ws) {
+			gitStatusStore.clear();
 			isGitRepo.set(false);
 			gitReviewOpen.set(false);
 			return;
 		}
-		const wsPath = ws.path;
-		let cancelled = false;
+		gitStatusStore.setRoot(ws.path);
+	});
 
-		async function check() {
-			try {
-				const status = (await getGitStatus(wsPath)) as { is_repo?: boolean };
-				if (!cancelled) isGitRepo.set(Boolean(status?.is_repo));
-			} catch {
-				if (!cancelled) isGitRepo.set(false);
-			}
-		}
-
-		check();
-		const interval = setInterval(check, 5000);
-		return () => {
-			cancelled = true;
-			clearInterval(interval);
-		};
+	// Sync isGitRepo flag from centralized store
+	$effect(() => {
+		isGitRepo.set(gitStatusStore.isRepo);
 	});
 </script>
 

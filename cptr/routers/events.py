@@ -33,7 +33,17 @@ router = APIRouter(prefix="/api/events", tags=["events"])
 
 def _create_observer():
     if platform.system() == "Darwin":
-        return PollingObserver()
+        # Prefer the native FSEvents observer on macOS – it fires only on
+        # real filesystem changes instead of polling (which generates
+        # constant false-positive "modified" events from stat calls).
+        try:
+            from watchdog.observers.fsevents import FSEventsObserver
+
+            return FSEventsObserver()
+        except ImportError:
+            # If the C-extension isn't available, fall back to polling
+            # with a longer interval to reduce noise.
+            return PollingObserver(timeout=3)
     return Observer()
 
 
@@ -44,8 +54,15 @@ class _ChangeCollector(FileSystemEventHandler):
         self._changes: set[str] = set()
         self._lock = threading.Lock()
 
+    # Paths that should never trigger a user-visible refresh
+    _IGNORED_SEGMENTS = {".git", "__pycache__", ".DS_Store", "node_modules"}
+
     def _record(self, event: FileSystemEvent) -> None:
         path = event.src_path
+        # Skip noisy internal paths that shouldn't trigger file browser refreshes
+        parts = Path(path).parts
+        if any(seg in self._IGNORED_SEGMENTS for seg in parts):
+            return
         with self._lock:
             self._changes.add(str(Path(path).parent))
             self._changes.add(path)
@@ -57,6 +74,11 @@ class _ChangeCollector(FileSystemEventHandler):
         self._record(event)
 
     def on_modified(self, event: FileSystemEvent) -> None:
+        # Ignore directory-modified events – these fire on any child
+        # change (which we already capture via on_created/on_deleted)
+        # and on metadata-only updates like atime from stat calls.
+        if event.is_directory:
+            return
         self._record(event)
 
     def on_moved(self, event: FileSystemEvent) -> None:

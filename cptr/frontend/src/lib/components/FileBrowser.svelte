@@ -35,6 +35,7 @@
 
 	let entries = $state<FileEntry[]>([]);
 	let loading = $state(false);
+	let initialLoad = $state(true);
 	let fetchTimer: ReturnType<typeof setTimeout> | null = null;
 	let fetching = false;
 	let error = $state<string | null>(null);
@@ -109,6 +110,7 @@
 					// Navigated to a new directory: reset tree state
 					expandedDirs = new Set();
 					dirContents = new Map();
+					initialLoad = true;
 				} else {
 					// Component (re)mount: restore tree state from cache
 					const cachedExpanded = _treeExpandedCache.get(cwd);
@@ -130,11 +132,12 @@
 		}
 	});
 
-	// Auto-refresh on filesystem changes (debounced)
+	// Auto-refresh on filesystem changes (debounced, silent)
 	$effect(() => {
 		const _tick = systemEvents.fsTick; // subscribe
 		if (_tick > 0 && cwd && !fetching && systemEvents.isRelevantFsChange(cwd)) {
-			debouncedFetch(cwd);
+			// Use a longer debounce for auto-refresh to batch rapid fs events
+			debouncedFetch(cwd, 800);
 			// Also refresh expanded directories
 			for (const dir of expandedDirs) {
 				fetchSubdir(dir);
@@ -153,12 +156,12 @@
 		}
 	}
 
-	function debouncedFetch(path: string) {
+	function debouncedFetch(path: string, delay = 300) {
 		if (fetchTimer) clearTimeout(fetchTimer);
 		fetchTimer = setTimeout(() => {
 			fetchTimer = null;
 			fetchDirectoryImmediate(path);
-		}, 300);
+		}, delay);
 	}
 
 	async function fetchDirectoryImmediate(path: string) {
@@ -166,7 +169,10 @@
 		fetchTimer = null;
 		if (fetching) return; // skip overlapping fetches
 		fetching = true;
-		loading = true;
+		// Only show the loading spinner on initial load (no entries yet).
+		// Background refreshes silently update entries in-place.
+		const isInitial = entries.length === 0;
+		if (isInitial) loading = true;
 		error = null;
 		try {
 			const data = await listDir(path);
@@ -183,6 +189,7 @@
 			}
 		} finally {
 			loading = false;
+			initialLoad = false;
 			fetching = false;
 		}
 	}
@@ -752,7 +759,7 @@
 			</div>
 		{/if}
 
-		{#if loading}
+		{#if loading && initialLoad}
 			<div class="flex items-center justify-center py-12">
 				<div
 					class="w-4 h-4 border-2 border-gray-300 border-t-gray-600 dark:border-gray-700 dark:border-t-gray-400 rounded-full animate-spin"

@@ -3,8 +3,36 @@
  */
 import { fetchJSON, jsonBody } from '$lib/apis';
 
-export const getGitStatus = (root: string) =>
-	fetchJSON(`/api/git/status?root=${encodeURIComponent(root)}`);
+// Deduplicate concurrent getGitStatus calls.
+// Multiple components (layout, GitBar, FileEditor × N) all fetch on mount;
+// this ensures they share a single in-flight request and a brief result cache.
+const _statusCache = new Map<string, { promise: Promise<unknown>; ts: number }>();
+const STATUS_CACHE_MS = 2000;
+
+export const getGitStatus = (root: string): Promise<unknown> => {
+	const cached = _statusCache.get(root);
+	if (cached && Date.now() - cached.ts < STATUS_CACHE_MS) {
+		return cached.promise;
+	}
+	const promise = fetchJSON(`/api/git/status?root=${encodeURIComponent(root)}`);
+	_statusCache.set(root, { promise, ts: Date.now() });
+	// Clean up after cache window
+	promise.finally(() => {
+		setTimeout(() => {
+			const entry = _statusCache.get(root);
+			if (entry && entry.promise === promise) {
+				_statusCache.delete(root);
+			}
+		}, STATUS_CACHE_MS);
+	});
+	return promise;
+};
+
+/** Force a fresh git status fetch, bypassing the cache. */
+export const getGitStatusFresh = (root: string): Promise<unknown> => {
+	_statusCache.delete(root);
+	return getGitStatus(root);
+};
 
 export const getGitLog = (root: string, limit = 30) =>
 	fetchJSON(`/api/git/log?root=${encodeURIComponent(root)}&limit=${limit}`);

@@ -1,19 +1,12 @@
 <script lang="ts">
 	import { activeWorkspace, openFileTab, gitReviewOpen } from '$lib/stores';
-	import { getGitDiff, getGitStatus } from '$lib/apis/git';
+	import { getGitDiff } from '$lib/apis/git';
+	import { gitStatusStore, type GitStatus, type GitFile } from '$lib/stores/gitStatus.svelte';
 
 	import { tooltip } from '$lib/tooltip';
 	import Icon from './Icon.svelte';
 
-	type GitFile = { path: string; status: string; staged: boolean };
-	type GitStatus = {
-		is_repo: boolean;
-		branch: string;
-		upstream?: string;
-		ahead: number;
-		behind: number;
-		files: GitFile[];
-	};
+
 	type DiffLine = { type: 'added' | 'removed' | 'context'; content: string };
 	type DiffHunk = { header: string; lines: DiffLine[] };
 	type DiffFile = { path: string; hunks: DiffHunk[] };
@@ -29,7 +22,7 @@
 	};
 	type NumberedLine = DiffLine & { oldNumber: number | null; newNumber: number | null };
 
-	let gitStatus = $state<GitStatus | null>(null);
+	let gitStatus = $derived(gitStatusStore.status);
 	let reviewFiles = $state<ReviewFile[]>([]);
 	let loading = $state(false);
 	let refreshing = $state(false);
@@ -40,22 +33,23 @@
 	const totalChanges = $derived(reviewFiles.length);
 	const anyExpanded = $derived(reviewFiles.some((file) => file.expanded));
 
+	// React to git status changes from centralized store
+	let _prevStatusRef: GitStatus | null = null;
 	$effect(() => {
-		if (!workspacePath) {
-			gitStatus = null;
+		const status = gitStatus;
+		if (!workspacePath || !status) {
 			reviewFiles = [];
 			return;
 		}
-
-		refreshReview(true);
-		const interval = setInterval(() => refreshReview(false), 5000);
-		return () => {
-			loadSeq += 1;
-			clearInterval(interval);
-		};
+		// Only re-fetch diffs when status actually changes
+		if (status !== _prevStatusRef) {
+			const isInitial = _prevStatusRef === null;
+			_prevStatusRef = status;
+			fetchDiffs(status, isInitial);
+		}
 	});
 
-	async function refreshReview(initial = false) {
+	async function fetchDiffs(status: GitStatus, initial = false) {
 		const seq = ++loadSeq;
 		const root = workspacePath;
 		if (!root) return;
@@ -65,10 +59,6 @@
 		error = '';
 
 		try {
-			const status = (await getGitStatus(root)) as GitStatus;
-			if (seq !== loadSeq || root !== workspacePath) return;
-
-			gitStatus = status;
 			if (!status.is_repo) {
 				reviewFiles = [];
 				return;
@@ -112,7 +102,6 @@
 		} catch (e) {
 			if (seq !== loadSeq) return;
 			error = e instanceof Error ? e.message : 'Failed to load git changes';
-			gitStatus = null;
 			reviewFiles = [];
 		} finally {
 			if (seq === loadSeq) {
@@ -120,6 +109,10 @@
 				refreshing = false;
 			}
 		}
+	}
+
+	async function refreshReview(initial = false) {
+		await gitStatusStore.refresh();
 	}
 
 	function fileKey(file: GitFile): string {
