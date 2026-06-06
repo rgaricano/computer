@@ -120,13 +120,13 @@
 >
 	{#if header}
 		{@render header()}
-		<div class="h-px bg-gray-100 dark:bg-white/4 mx-1 my-0.5"></div>
+		<div class="h-px bg-gray-100/50 dark:bg-white/3 mx-1 my-0.5"></div>
 	{/if}
 
 	<div style={maxHeight ? `max-height: ${maxHeight}; overflow-y: auto;` : ''}>
 		{#each items as item}
 			{#if item.divider}
-				<div class="h-px bg-gray-100 dark:bg-white/4 mx-1 my-0.5"></div>
+				<div class="h-px bg-gray-100/50 dark:bg-white/3 mx-1 my-0.5"></div>
 			{:else}
 				<button
 					class="flex items-center gap-2 w-full h-7 px-2 rounded-xl text-xs transition-colors duration-75
