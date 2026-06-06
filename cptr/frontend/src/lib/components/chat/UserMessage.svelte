@@ -2,7 +2,7 @@
 	import { tick } from 'svelte';
 	import Icon from '../Icon.svelte';
 	import { fileIconName } from '$lib/utils/fileIcon';
-	import { openFileTab } from '$lib/stores';
+	import { openFileTab, setFileBrowserCwd, setActiveTab } from '$lib/stores';
 
 	interface Props {
 		content: string;
@@ -125,7 +125,7 @@
 		<!-- Bubble: right-aligned -->
 		<div class="flex justify-end">
 			<div class="max-w-[90%] px-4 py-2 rounded-3xl bg-gray-50 dark:bg-white/[0.06]">
-				<div class="text-[13px] leading-relaxed text-gray-900 dark:text-gray-200 whitespace-pre-wrap break-words">{#each parsedContent as segment}{#if segment.type === 'text'}{segment.value}{:else}<button class="inline-flex items-center gap-0.5 bg-blue-500/10 text-blue-400 rounded px-1.5 py-px mx-0.5 text-xs font-mono align-baseline border-none cursor-pointer hover:bg-blue-500/20 transition-colors" title={segment.path} onclick={(e) => { e.preventDefault(); openFileTab(segment.path); }}><Icon name={fileIconName(segment.label, 'file')} size={11} />{segment.label}</button>{/if}{/each}</div>
+				<div class="text-[13px] leading-relaxed text-gray-900 dark:text-gray-200 whitespace-pre-wrap break-words">{#each parsedContent as segment}{#if segment.type === 'text'}{segment.value}{:else}{@const isDir = segment.path.endsWith('/')}{@const cleanPath = isDir ? segment.path.slice(0, -1) : segment.path}<button class="inline-flex items-center gap-0.5 bg-blue-500/10 text-blue-400 rounded px-1.5 py-px mx-0.5 text-xs font-mono align-baseline border-none cursor-pointer hover:bg-blue-500/20 transition-colors" title={cleanPath} onclick={(e) => { e.preventDefault(); if (isDir) { setFileBrowserCwd(cleanPath); setActiveTab('files'); } else { openFileTab(cleanPath); } }}><Icon name={isDir ? 'folder' : fileIconName(segment.label, 'file')} size={11} />{segment.label}</button>{/if}{/each}</div>
 			</div>
 		</div>
 		{#if siblingTotal > 1 || onedit}

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Token } from 'marked';
-	import { openFileTab } from '$lib/stores';
+	import { openFileTab, setFileBrowserCwd, setActiveTab } from '$lib/stores';
 
 	interface Props {
 		items: Token[];
@@ -56,18 +56,26 @@
 	{:else if item.type === 'link'}
 		{@const href = ('href' in item) ? item.href : ''}
 		{#if href?.startsWith('file:///')}
-			{@const filePath = decodeURIComponent(href.replace('file://', ''))}
+			{@const rawPath = decodeURIComponent(href.replace('file://', ''))}
+			{@const isDirectory = rawPath.endsWith('/')}
+			{@const filePath = isDirectory ? rawPath.slice(0, -1) : rawPath}
 			{@const fileName = filePath.split('/').pop() || filePath}
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<button
 				class="inline-flex items-center gap-1 px-1 py-px rounded text-[13px] leading-snug font-medium cursor-pointer border-none text-blue-500 dark:text-blue-400 hover:bg-blue-500/8 transition-colors align-baseline"
 				title={filePath}
-				onclick={(e) => { e.preventDefault(); openFileTab(filePath); }}
+				onclick={(e) => { e.preventDefault(); if (isDirectory) { setFileBrowserCwd(filePath); setActiveTab('files'); } else { openFileTab(filePath); } }}
 			>
-				<svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M9 1.5H4a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 0 4 14.5h8a1.5 1.5 0 0 0 1.5-1.5V6L9 1.5Z" />
-					<path d="M9 1.5V6h4.5" />
-				</svg>
+				{#if isDirectory}
+					<svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M2.5 3A1.5 1.5 0 0 1 4 1.5h2.172a1.5 1.5 0 0 1 1.06.44l.768.767a1.5 1.5 0 0 0 1.06.439H12A1.5 1.5 0 0 1 13.5 4.5v8A1.5 1.5 0 0 1 12 14H4a1.5 1.5 0 0 1-1.5-1.5V3Z" />
+					</svg>
+				{:else}
+					<svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M9 1.5H4a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 0 4 14.5h8a1.5 1.5 0 0 0 1.5-1.5V6L9 1.5Z" />
+						<path d="M9 1.5V6h4.5" />
+					</svg>
+				{/if}
 				{fileName}
 			</button>
 		{:else}

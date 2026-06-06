@@ -69,7 +69,7 @@
 			const data = await searchFiles(query || '', workspace);
 			const results = (data as any).results ?? [];
 			return results.slice(0, 10).map((r: any) => ({
-				id: r.path,
+				id: r.type === 'directory' && !r.path.endsWith('/') ? r.path + '/' : r.path,
 				label: r.name,
 				type: r.type === 'directory' ? 'directory' : 'file',
 			}));
