@@ -14,6 +14,7 @@ import os
 import uuid
 from pathlib import Path
 from typing import get_type_hints
+from cptr.env import CHAT_TOOL_MAX_CHARS
 
 
 # ── Background task state ───────────────────────────────────
@@ -145,11 +146,6 @@ async def list_directory(
                 except OSError:
                     sz = 0
                 entries.append(f"{rel / f}  ({_human_size(sz)})")
-                if len(entries) > 500:
-                    entries.append("... (truncated at 500)")
-                    break
-            if len(entries) > 500:
-                break
     else:
         for item in sorted(full.iterdir()):
             if item.name in ignore:
@@ -167,7 +163,8 @@ async def list_directory(
                     sz = 0
                 entries.append(f"{item.name}  ({_human_size(sz)})")
 
-    return "\n".join(entries) if entries else "(empty directory)"
+    res = "\n".join(entries) if entries else "(empty directory)"
+    return _truncate_output(res, max_chars=CHAT_TOOL_MAX_CHARS)
 
 
 async def search_files(
@@ -199,7 +196,7 @@ async def search_files(
         # ripgrep not installed, fall back to Python
         res = await _search_python(query, full, case_insensitive)
 
-    return _truncate_output(res, max_chars=30_000)
+    return _truncate_output(res, max_chars=CHAT_TOOL_MAX_CHARS)
 
 
 async def _search_rg(
