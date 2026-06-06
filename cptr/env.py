@@ -25,3 +25,8 @@ CHAT_MAX_ITERATIONS = int(os.environ.get("CHAT_MAX_ITERATIONS", "2048"))
 ENABLE_CHAT_RECONCILE_ON_STARTUP: bool = os.environ.get(
     "ENABLE_CHAT_RECONCILE_ON_STARTUP", "true"
 ).lower() in ("true", "1", "yes")
+
+# ── AI stream settings ──────────────────────────────────────
+STREAM_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("CPTR_STREAM_CONNECT_TIMEOUT", "30"))
+STREAM_READ_TIMEOUT_SECONDS = float(os.environ.get("CPTR_STREAM_READ_TIMEOUT", "300"))
+STREAM_WRITE_TIMEOUT_SECONDS = float(os.environ.get("CPTR_STREAM_WRITE_TIMEOUT", "600"))

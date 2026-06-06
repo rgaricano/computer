@@ -474,21 +474,23 @@ async def run_chat_task(
     logger.info("[task %s] start: existing content=%d chars, output=%d items",
                 message_id[:8], len(content), len(output_items))
 
-    def _flush_text():
+    def _flush_text() -> dict | None:
         """Flush accumulated text into a message output item."""
         nonlocal text_buffer
         if not text_buffer:
-            return
+            return None
         logger.info("[task %s] flush_text: %d chars into message item",
                     message_id[:8], len(text_buffer))
-        output_items.append({
+        item = {
             "type": "message",
             "id": str(uuid.uuid4()),
             "status": "completed",
             "role": "assistant",
             "content": [{"type": "output_text", "text": text_buffer}],
-        })
+        }
+        output_items.append(item)
         text_buffer = ""
+        return item
 
     def _sync_state():
         """Update in-memory state so API can serve it on refresh."""
@@ -546,7 +548,7 @@ async def run_chat_task(
 
                 elif event["type"] == "tool_call":
                     # Flush any text before the tool call
-                    _flush_text()
+                    flushed_item = _flush_text()
 
                     name = event["name"]
                     tool = TOOLS.get(name)
@@ -574,6 +576,8 @@ async def run_chat_task(
                             "output": result,
                         }
                         output_items.append(result_item)
+                        if flushed_item:
+                            await emit(output=flushed_item)
                         await emit(output=item)
                         await emit(output=result_item)
                         _sync_state()
@@ -614,6 +618,8 @@ async def run_chat_task(
                             output=output_items,
                             done=False,
                         )
+                        if flushed_item:
+                            await emit(output=flushed_item)
                         await emit(output=item)
                         await emit(done=True)
                         return

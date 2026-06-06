@@ -18,15 +18,27 @@ from typing import Dict, List
 import httpx
 from pydantic import BaseModel
 
+from cptr.env import (
+    STREAM_CONNECT_TIMEOUT_SECONDS,
+    STREAM_READ_TIMEOUT_SECONDS,
+    STREAM_WRITE_TIMEOUT_SECONDS,
+)
+
 logger = logging.getLogger(__name__)
 
 _STREAM_RETRY_ATTEMPTS = 3
+_STREAM_TIMEOUT = httpx.Timeout(
+    STREAM_CONNECT_TIMEOUT_SECONDS,
+    read=STREAM_READ_TIMEOUT_SECONDS,
+    write=STREAM_WRITE_TIMEOUT_SECONDS,
+)
 _STREAM_RETRY_ERRORS = (
     httpx.ConnectError,
     httpx.ConnectTimeout,
     httpx.ReadError,
     httpx.ReadTimeout,
     httpx.RemoteProtocolError,
+    httpx.WriteTimeout,
 )
 
 
@@ -184,7 +196,7 @@ async def stream_anthropic(
     emitted = False
     for attempt in range(_STREAM_RETRY_ATTEMPTS):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=300)) as client:
+            async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
                 logger.info("[stream] anthropic POST %s/messages model=%s", url, form_data.model)
                 async with client.stream(
                     "POST", f"{url}/messages", json=body, headers=headers
@@ -238,7 +250,7 @@ async def stream_anthropic(
             if emitted or attempt == _STREAM_RETRY_ATTEMPTS - 1:
                 raise
             logger.warning(
-                "[stream] anthropic transient read failure before first event; retrying (%s/%s)",
+                "[stream] anthropic transient stream failure before first event; retrying (%s/%s)",
                 attempt + 1,
                 _STREAM_RETRY_ATTEMPTS,
                 exc_info=True,
@@ -289,7 +301,7 @@ async def stream_openai_completions(
     emitted = False
     for attempt in range(_STREAM_RETRY_ATTEMPTS):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=300)) as client:
+            async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
                 logger.info("[stream] openai completions POST %s/chat/completions model=%s", url, form_data.model)
                 async with client.stream(
                     "POST", f"{url}/chat/completions", json=body, headers=headers
@@ -341,7 +353,7 @@ async def stream_openai_completions(
             if emitted or attempt == _STREAM_RETRY_ATTEMPTS - 1:
                 raise
             logger.warning(
-                "[stream] openai completions transient read failure before first event; retrying (%s/%s)",
+                "[stream] openai completions transient stream failure before first event; retrying (%s/%s)",
                 attempt + 1,
                 _STREAM_RETRY_ATTEMPTS,
                 exc_info=True,
@@ -406,7 +418,7 @@ async def stream_openai_responses(
     emitted = False
     for attempt in range(_STREAM_RETRY_ATTEMPTS):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=300)) as client:
+            async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
                 logger.info("[stream] openai responses POST %s/responses model=%s", url, form_data.model)
                 async with client.stream(
                     "POST", f"{url}/responses", json=body, headers=headers
@@ -446,7 +458,7 @@ async def stream_openai_responses(
             if emitted or attempt == _STREAM_RETRY_ATTEMPTS - 1:
                 raise
             logger.warning(
-                "[stream] openai responses transient read failure before first event; retrying (%s/%s)",
+                "[stream] openai responses transient stream failure before first event; retrying (%s/%s)",
                 attempt + 1,
                 _STREAM_RETRY_ATTEMPTS,
                 exc_info=True,
