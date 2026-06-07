@@ -816,7 +816,7 @@
 	{#if isLanding}
 		<!-- Landing: input + recent chats -->
 		<div class="flex-1 overflow-y-auto flex flex-col">
-			<div class="max-w-xl w-full mx-auto px-4 flex flex-col my-auto py-6">
+			<div class="max-w-xl w-full mx-auto px-4 flex flex-col my-auto pt-6 {previousChats.length === 0 ? 'pb-20' : 'pb-6'}">
 				<!-- Greeting -->
 				<div class="mb-8 text-center">
 					<h1 class="text-lg font-normal text-gray-800 dark:text-gray-200 tracking-tight">
