@@ -70,6 +70,7 @@ export interface UserPreferences {
 	sidebarOpen: boolean;
 	sidebarWidth: number;
 	toolApprovalMode: ToolApprovalMode;
+	planMode: boolean;
 	locale: string;
 	workspaceOrder?: string[]; // ordered paths for sidebar drag-reorder
 	keybindings?: Record<string, string>; // user-customised keyboard shortcuts
@@ -133,6 +134,7 @@ if (typeof window !== 'undefined') {
 export const sidebarWidth = writable(220);
 export const theme = writable<Theme>('dark');
 export const toolApprovalMode = writable<ToolApprovalMode>('auto');
+export const planMode = writable(false);
 export const appVersion = writable('');
 export const lastSeenVersion = writable('');
 export const showChangelog = writable(false);
@@ -277,6 +279,7 @@ function persistPreferences(): void {
 			sidebarOpen: get(sidebarOpen),
 			sidebarWidth: get(sidebarWidth),
 			toolApprovalMode: get(toolApprovalMode),
+			planMode: get(planMode),
 			locale: i18next.language,
 			workspaceOrder: get(workspaceOrder),
 			keybindings: get(keybindings),
@@ -304,6 +307,9 @@ function subscribeForPersistence() {
 		if (get(stateLoaded)) persistPreferences();
 	});
 	toolApprovalMode.subscribe(() => {
+		if (get(stateLoaded)) persistPreferences();
+	});
+	planMode.subscribe(() => {
 		if (get(stateLoaded)) persistPreferences();
 	});
 	workspaceOrder.subscribe(() => {
@@ -338,6 +344,7 @@ export async function loadPreferences(): Promise<void> {
 			// Legacy boolean migration
 			toolApprovalMode.set((prefs.autoApproveTools as unknown as boolean) ? 'full' : 'ask');
 		}
+		if (prefs.planMode !== undefined) planMode.set(prefs.planMode as boolean);
 		if (prefs.locale) changeLocale(prefs.locale as string);
 		if (Array.isArray(prefs.workspaceOrder)) workspaceOrder.set(prefs.workspaceOrder as string[]);
 		if (prefs.keybindings) loadKeybindings(prefs.keybindings as Record<string, string>);

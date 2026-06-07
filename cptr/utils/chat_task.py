@@ -29,6 +29,11 @@ from cptr.utils.json_parser import extract_json
 
 logger = logging.getLogger(__name__)
 
+PLAN_MODE_PROMPT = (
+    "[Plan Mode] Research the codebase with read-only tools, then present your plan "
+    "using create_file with artifact_type='implementation_plan'. Wait for approval before coding."
+)
+
 # ── Task registry ───────────────────────────────────────────
 
 _tasks: dict[str, asyncio.Task] = {}  # message_id → asyncio.Task
@@ -262,8 +267,39 @@ def _get_file_tree(workspace: str, max_entries: int = 200) -> str:
     return "\n".join(entries)
 
 
+INSTRUCTION_FILENAMES = ["MEMORY.md", "AGENTS.md", "AGENT.md", "CLAUDE.md"]
+
+
+def _load_instruction_files(workspace: str, max_bytes: int = 32_000) -> str:
+    """Load well-known AI instruction files from workspace root.
+
+    Scans for MEMORY.md, AGENTS.md, AGENT.md, CLAUDE.md.
+    All found files are concatenated (not first-found-wins).
+    """
+    ws = Path(workspace)
+    if not ws.is_dir():
+        return ""
+    parts: list[str] = []
+    total = 0
+    for name in INSTRUCTION_FILENAMES:
+        path = ws / name
+        if path.is_file():
+            remaining = max_bytes - total
+            if remaining <= 0:
+                break
+            try:
+                content = path.read_text(errors="replace")[:remaining].strip()
+            except OSError:
+                continue
+            if content:
+                parts.append(f"# {name}\n{content}")
+                total += len(content)
+                logger.debug("[instructions] Loaded %s (%d bytes)", name, len(content))
+    return "\n\n".join(parts)
+
+
 def _load_system_prompt(workspace: str) -> str:
-    """Load system prompt: .cptr/system.md > default. Appends file tree."""
+    """Load system prompt: .cptr/system.md > default. Appends instruction files + file tree."""
     ws_prompt = Path(workspace) / ".cptr" / "system.md"
     if ws_prompt.is_file():
         base = ws_prompt.read_text(errors="replace").strip()
@@ -271,7 +307,25 @@ def _load_system_prompt(workspace: str) -> str:
         base = (
             "You are a helpful coding assistant. "
             "You have access to tools to read, search, and modify files in the workspace. "
-            "Use them to help the user with their coding tasks."
+            "Use them to help the user with their coding tasks.\n\n"
+            "## Planning for Complex Tasks\n"
+            "For non-trivial tasks (multi-file changes, architectural decisions, ambiguous requirements), "
+            "FIRST investigate the codebase, then create an implementation plan artifact by calling "
+            "create_file with artifact_type='implementation_plan'. Write the plan as structured markdown "
+            "with: Background, Proposed Changes (grouped by component/file), and Verification Steps. "
+            "Wait for the user to review before making code changes. "
+            "For simple/clear tasks (typo fixes, small edits, direct questions), skip the plan and act directly."
+        )
+
+    # Load MEMORY.md / AGENTS.md / CLAUDE.md from workspace root
+    instructions = _load_instruction_files(workspace)
+    if instructions:
+        base += f"\n\n<instructions>\n{instructions}\n</instructions>"
+        base += (
+            "\n\nThe above <instructions> were loaded from files in the workspace root "
+            "(MEMORY.md, AGENTS.md, CLAUDE.md). These files persist across sessions. "
+            "You can update them with your file tools to save learnings, decisions, or "
+            "project conventions for future sessions."
         )
 
     tree = _get_file_tree(workspace)
@@ -569,6 +623,12 @@ async def run_chat_task(
         chat_obj = await Chat.get_by_id(chat_id)
         chat_params = (chat_obj.meta or {}).get("params", {}) if chat_obj else {}
 
+        # Plan mode: inject prompt
+        plan_mode = chat_params.get("plan_mode", False)
+        if plan_mode:
+            messages.append({"role": "user", "content": PLAN_MODE_PROMPT})
+            logger.info("[task %s] plan mode active", message_id[:8])
+
         # Tool approval mode: 'ask' | 'auto' | 'full'
         #   ask  = require approval for ALL tools (including reads)
         #   auto = auto-approve tools marked auto=True, ask for others
@@ -616,7 +676,6 @@ async def run_chat_task(
                         "arguments": event["arguments"],
                     }
 
-                    # Decide whether to auto-approve
                     should_auto = approval_mode == "full" or (
                         approval_mode == "auto" and tool and tool["auto"]
                     )

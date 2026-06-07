@@ -27,6 +27,7 @@
 	import {
 		currentWorkspace,
 		toolApprovalMode,
+		planMode,
 		streamingBehavior,
 		selectedModelId
 	} from '$lib/stores';
@@ -519,7 +520,7 @@
 						workspace,
 						chatId,
 						parentId,
-						{ tool_approval_mode: mode },
+						{ tool_approval_mode: mode, plan_mode: get(planMode) },
 						undefined,
 						files
 					);
@@ -583,7 +584,7 @@
 				workspace,
 				chatId ?? undefined,
 				parentId,
-				{ tool_approval_mode: mode },
+				{ tool_approval_mode: mode, plan_mode: get(planMode) },
 				undefined,
 				files
 			);
@@ -733,7 +734,8 @@
 		try {
 			const mode = get(toolApprovalMode);
 			const result = await apiSendMessage('', selectedModel, workspace, chatId, msg.parent_id, {
-				tool_approval_mode: mode
+				tool_approval_mode: mode,
+				plan_mode: get(planMode)
 			});
 			await loadChat(result.chat_id);
 		} catch (e) {
@@ -773,7 +775,7 @@
 					workspace,
 					chatId,
 					msg.parent_id,
-					{ tool_approval_mode: get(toolApprovalMode) }
+					{ tool_approval_mode: get(toolApprovalMode), plan_mode: get(planMode) }
 				);
 				await loadChat(result.chat_id);
 			} catch (e) {
