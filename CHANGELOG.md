@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 📦 **PyPI install actually works now.** Hatchling's `exclude` took precedence over `artifacts`, causing every published wheel to ship without the frontend build. The app returned `{"detail":"Not Found"}` on all non-API routes. Switched to `force-include` (matching open-webui's approach), which unconditionally bundles `cptr/frontend/build` into the wheel regardless of exclude rules.
 
+## [0.1.8] - 2026-06-07
+
+### Fixed
+
+- 📦 **Attempted PyPI wheel fix (incomplete).** Changed hatchling `exclude` from a single broad pattern to granular excludes, but the `artifacts` directive still did not override `exclude`. Wheel still shipped without the frontend.
+
 ## [0.1.7] - 2026-06-07
 
 ### Fixed
