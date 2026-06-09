@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import secrets
 import time
 from typing import Optional
 
@@ -32,8 +34,16 @@ def _get_user(request: Request) -> str:
     return auth.user_id
 
 
-def _automation_dict(a: Automation, last_run: AutomationRun | None = None, next_runs: list[int] | None = None) -> dict:
+def _hash_token(token: str) -> str:
+    """SHA-256 hash a webhook token."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _automation_dict(a: Automation, last_run: AutomationRun | None = None, next_runs: list[int] | None = None, webhook_url: str | None = None) -> dict:
     """Serialize an Automation to a response dict."""
+    meta = a.meta or {}
+    has_webhook = bool(meta.get("webhook_token"))
+
     return {
         "id": a.id,
         "user_id": a.user_id,
@@ -50,6 +60,8 @@ def _automation_dict(a: Automation, last_run: AutomationRun | None = None, next_
         "updated_at": a.updated_at,
         "last_run": _run_dict(last_run) if last_run else None,
         "next_runs": next_runs,
+        "has_webhook": has_webhook,
+        "webhook_url": webhook_url,
     }
 
 
@@ -220,15 +232,43 @@ async def toggle_automation(automation_id: str, request: Request):
 
 
 @router.post("/{automation_id}/run")
-async def run_automation_now(automation_id: str, request: Request):
-    user_id = _get_user(request)
-    automation = await Automation.get_by_id(automation_id)
-    if not automation or automation.user_id != user_id:
-        raise HTTPException(404, "automation not found")
+async def run_automation_now(
+    automation_id: str,
+    request: Request,
+    token: Optional[str] = Query(None, description="Webhook token for unauthenticated access"),
+):
+    if token:
+        # Webhook path: validate token, no session required
+        automation = await Automation.get_by_id(automation_id)
+        if not automation:
+            raise HTTPException(404, "automation not found")
+        meta = automation.meta or {}
+        expected_hash = meta.get("webhook_token", "")
+        if not expected_hash or _hash_token(token) != expected_hash:
+            raise HTTPException(403, "invalid token")
+        if not automation.is_active:
+            raise HTTPException(409, "automation is paused")
+
+        # Inject webhook payload into prompt if request has a body
+        webhook_payload = None
+        try:
+            body = await request.json()
+            if body:
+                import json
+                webhook_payload = json.dumps(body, indent=2)
+        except Exception:
+            pass
+    else:
+        # Normal path: require session auth
+        user_id = _get_user(request)
+        automation = await Automation.get_by_id(automation_id)
+        if not automation or automation.user_id != user_id:
+            raise HTTPException(404, "automation not found")
+        webhook_payload = None
 
     from cptr.utils.automations import execute_automation
 
-    asyncio.create_task(execute_automation(automation))
+    asyncio.create_task(execute_automation(automation, webhook_payload=webhook_payload))
     return _automation_dict(automation)
 
 
@@ -263,3 +303,46 @@ async def get_automation_runs(
 
     runs = await AutomationRun.get_by_automation(automation_id, skip=skip, limit=limit)
     return [_run_dict(r) for r in runs]
+
+
+# ── Webhook management ──────────────────────────────────────
+
+
+@router.post("/{automation_id}/webhook")
+async def generate_webhook(automation_id: str, request: Request):
+    """Generate or regenerate a webhook token for this automation.
+
+    Returns the plaintext webhook URL once. The token is stored as a
+    SHA-256 hash — the URL cannot be recovered after this response.
+    """
+    user_id = _get_user(request)
+    automation = await Automation.get_by_id(automation_id)
+    if not automation or automation.user_id != user_id:
+        raise HTTPException(404, "automation not found")
+
+    plaintext = f"wh_{secrets.token_hex(20)}"
+    meta = dict(automation.meta or {})
+    meta["webhook_token"] = _hash_token(plaintext)
+    await Automation.update_by_id(automation_id, updated_at=now_ms(), meta=meta)
+
+    base = str(request.base_url).rstrip("/")
+    webhook_url = f"{base}/api/automations/{automation_id}/run?token={plaintext}"
+
+    updated = await Automation.get_by_id(automation_id)
+    return _automation_dict(updated, webhook_url=webhook_url)
+
+
+@router.delete("/{automation_id}/webhook")
+async def revoke_webhook(automation_id: str, request: Request):
+    """Revoke the webhook token for this automation."""
+    user_id = _get_user(request)
+    automation = await Automation.get_by_id(automation_id)
+    if not automation or automation.user_id != user_id:
+        raise HTTPException(404, "automation not found")
+
+    meta = dict(automation.meta or {})
+    meta.pop("webhook_token", None)
+    await Automation.update_by_id(automation_id, updated_at=now_ms(), meta=meta)
+
+    updated = await Automation.get_by_id(automation_id)
+    return _automation_dict(updated)

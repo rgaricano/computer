@@ -16,6 +16,8 @@ export type AutomationData = {
 	updated_at: number;
 	last_run: AutomationRunData | null;
 	next_runs: number[] | null;
+	has_webhook: boolean;
+	webhook_url: string | null;
 };
 
 export type AutomationRunData = {
@@ -80,4 +82,12 @@ export async function getAutomationRuns(
 	limit: number = 50
 ): Promise<AutomationRunData[]> {
 	return fetchJSON(`/api/automations/${id}/runs?skip=${skip}&limit=${limit}`);
+}
+
+export async function generateWebhook(id: string): Promise<AutomationData> {
+	return fetchJSON(`/api/automations/${id}/webhook`, { method: 'POST' });
+}
+
+export async function deleteWebhook(id: string): Promise<AutomationData> {
+	return fetchJSON(`/api/automations/${id}/webhook`, { method: 'DELETE' });
 }

@@ -111,11 +111,14 @@ async def scheduler_worker_loop(app) -> None:
 ####################
 
 
-async def execute_automation(automation) -> None:
+async def execute_automation(automation, webhook_payload: str | None = None) -> None:
     """Execute an automation by creating a chat and calling start_task().
 
     Creates a real chat + messages, then uses the same agentic loop
     as interactive chats, giving automations full tool-calling capabilities.
+
+    If webhook_payload is provided, {{webhook_payload}} in the prompt is
+    replaced with the payload content.
     """
     from cptr.models import Chat, ChatMessage
     from cptr.models.automations import AutomationRun
@@ -126,6 +129,9 @@ async def execute_automation(automation) -> None:
         workspace = automation.workspace
         model_id = automation.model_id
         prompt = automation.prompt
+
+        if webhook_payload:
+            prompt = prompt.replace("{{webhook_payload}}", webhook_payload)
 
         # Create the chat
         chat = await Chat.create(

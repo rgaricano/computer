@@ -16,6 +16,8 @@
 		runAutomation,
 		getAutomationById,
 		getAutomationRuns,
+		generateWebhook,
+		deleteWebhook,
 		type AutomationData,
 		type AutomationRunData
 	} from '$lib/apis/automations';
@@ -139,6 +141,47 @@
 		const freq = match[1].toLowerCase();
 		return freq.charAt(0).toUpperCase() + freq.slice(1);
 	}
+
+	// ── Webhook ──
+	let webhookLoading = $state(false);
+	let webhookCopied = $state(false);
+
+	async function handleGenerateWebhook() {
+		if (!detail) return;
+		webhookLoading = true;
+		try {
+			const updated = await generateWebhook(detail.id);
+			detail = updated;
+			items = items.map((i) => (i.id === updated.id ? updated : i));
+			toast.success('Webhook enabled');
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to generate webhook');
+		} finally {
+			webhookLoading = false;
+		}
+	}
+
+	async function handleRevokeWebhook() {
+		if (!detail) return;
+		webhookLoading = true;
+		try {
+			const updated = await deleteWebhook(detail.id);
+			detail = updated;
+			items = items.map((i) => (i.id === updated.id ? updated : i));
+			toast.success('Webhook disabled');
+		} catch (e: any) {
+			toast.error(e.message || 'Failed to revoke webhook');
+		} finally {
+			webhookLoading = false;
+		}
+	}
+
+	function copyWebhookUrl() {
+		if (!detail?.webhook_url) return;
+		navigator.clipboard.writeText(detail.webhook_url);
+		webhookCopied = true;
+		setTimeout(() => (webhookCopied = false), 2000);
+	}
 </script>
 
 <div class="flex flex-col h-full overflow-hidden">
@@ -150,7 +193,7 @@
 			</div>
 		{:else if detail}
 			<!-- Header -->
-			<div class="flex items-center gap-2 h-9 px-3 border-b border-gray-200 dark:border-white/6 shrink-0">
+			<div class="flex items-center gap-2 h-9 {$sidebarOpen ? 'px-3' : 'px-1.5'} border-b border-gray-200 dark:border-white/6 shrink-0">
 				{#if !$sidebarOpen}
 					<button
 						class="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-100"
@@ -223,6 +266,49 @@
 						<span class="text-[11px] text-gray-400 dark:text-gray-500 w-20 shrink-0">Last run</span>
 						<span class="text-xs text-gray-700 dark:text-gray-300">{formatTime(detail.last_run_at)}</span>
 					</div>
+					<div class="flex items-center min-h-[1.75rem] px-3">
+						<span class="text-[11px] text-gray-400 dark:text-gray-500 w-20 shrink-0">Webhook</span>
+						{#if detail.webhook_url}
+							<div class="flex items-center gap-1.5 min-w-0 flex-1">
+								<span class="text-[11px] text-gray-500 dark:text-gray-400 font-mono truncate">...?token={detail.webhook_url.split('token=')[1]?.slice(0, 12)}...</span>
+								<button
+									class="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-75 shrink-0"
+									onclick={copyWebhookUrl}
+								>
+									{webhookCopied ? 'Copied!' : 'Copy'}
+								</button>
+							</div>
+						{:else if detail.has_webhook}
+							<!-- Webhook enabled, URL not available -->
+							<div class="flex items-center gap-1.5">
+								<span class="text-xs text-gray-700 dark:text-gray-300">Enabled</span>
+								<span class="text-gray-300 dark:text-gray-600">·</span>
+								<button
+									class="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-75"
+									onclick={handleGenerateWebhook}
+									disabled={webhookLoading}
+								>
+									Regenerate
+								</button>
+								<span class="text-gray-300 dark:text-gray-600">·</span>
+								<button
+									class="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-75"
+									onclick={handleRevokeWebhook}
+									disabled={webhookLoading}
+								>
+									Disable
+								</button>
+							</div>
+						{:else}
+							<button
+								class="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-75"
+								onclick={handleGenerateWebhook}
+								disabled={webhookLoading}
+							>
+								Enable
+							</button>
+						{/if}
+					</div>
 				</div>
 
 				<!-- Prompt -->
@@ -269,7 +355,7 @@
 	{:else}
 		<!-- ── List ── -->
 		<!-- Header -->
-		<div class="flex items-center gap-2 h-9 px-3 border-b border-gray-200 dark:border-white/6 shrink-0">
+		<div class="flex items-center gap-2 h-9 {$sidebarOpen ? 'px-3' : 'px-1.5'} border-b border-gray-200 dark:border-white/6 shrink-0">
 			{#if !$sidebarOpen}
 				<button
 					class="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-100"
