@@ -124,7 +124,7 @@
 </script>
 
 {#snippet paramRows(rows: ParamRow[], onInput: () => void, onRemove: (i: number) => void, onAdd: () => void)}
-	<div class="mt-0.5 mb-1">
+	<div class="mb-2">
 		<span class="text-[10px] text-gray-400 dark:text-gray-600 uppercase tracking-wide">request params</span>
 		{#each rows as row, i}
 			<div class="group/row flex items-center gap-1.5 h-6">
