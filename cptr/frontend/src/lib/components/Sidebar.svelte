@@ -21,7 +21,7 @@
 	import DirectoryPicker from './DirectoryPicker.svelte';
 	import DropdownMenu from './DropdownMenu.svelte';
 	import SettingsModal from './SettingsModal.svelte';
-	import AdminPanel from './AdminPanel.svelte';
+
 	import { tooltip } from '$lib/tooltip';
 	import { session, clearSession } from '$lib/session';
 	import { getWelcome } from '$lib/apis/state';
@@ -37,8 +37,7 @@
 	let showPicker = $state(false);
 	let showMenu = $state(false);
 	let showSettings = $state(false);
-	let settingsTab = $state<'general' | 'account' | 'about'>('general');
-	let showAdmin = $state(false);
+	let settingsTab = $state<string>('general');
 	let wsMenuPath = $state<string | null>(null);
 	let wsMenuAnchor = $state<HTMLElement | null>(null);
 
@@ -508,25 +507,14 @@
 							image: $session.profile_image_url || '/user.png',
 							onclick: () => {
 								settingsTab = 'account';
+								showMenu = false;
 								showSettings = true;
 							}
 						}
 					]
 				: []),
 			...($session ? [{ divider: true, label: '', onclick: () => {} }] : []),
-			{ label: $t('sidebar.settings'), icon: 'settings', onclick: openSettings },
-			...($session?.role === 'admin'
-				? [
-						{
-							label: $t('sidebar.admin'),
-							icon: 'shield',
-							onclick: () => {
-								showMenu = false;
-								showAdmin = true;
-							}
-						}
-					]
-				: []),
+			{ label: $t('sidebar.settings'), icon: 'settings', shortcut: formatChord($keybindings.openSettings), onclick: openSettings },
 			{ divider: true, label: '', onclick: () => {} },
 			{ label: $t('sidebar.logOut'), icon: 'log-out', onclick: logout }
 		]}
@@ -560,10 +548,6 @@
 			settingsTab = 'general';
 		}}
 	/>
-{/if}
-
-{#if showAdmin}
-	<AdminPanel onclose={() => (showAdmin = false)} />
 {/if}
 
 <style>

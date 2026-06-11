@@ -310,5 +310,9 @@
 	{:else if name === 'clock'}
 		<circle cx="12" cy="12" r="10" />
 		<path d="M12 6V12H16.5" />
+	{:else if name === 'cube'}
+		<path d="M12 2L2 7L12 12L22 7L12 2Z" />
+		<path d="M2 17L12 22L22 17" />
+		<path d="M2 12L12 17L22 12" />
 	{/if}
 </svg>

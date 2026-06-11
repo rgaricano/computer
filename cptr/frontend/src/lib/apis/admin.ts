@@ -104,3 +104,27 @@ export const verifyConnection = (id: string) =>
 	fetchJSON<{ ok: boolean; message: string }>(`/api/admin/connections/${id}/verify`, {
 		method: 'POST'
 	});
+
+// ── Model Config ────────────────────────────────────────────
+
+export interface ModelConfigEntry {
+	is_active?: boolean;
+	params?: { request_params?: Record<string, unknown> };
+}
+
+export interface ModelConfigResponse {
+	config: Record<string, ModelConfigEntry>;
+	models: { id: string; name: string; provider: string; connection_id: string }[];
+}
+
+export const getModelConfig = async (): Promise<ModelConfigResponse> =>
+	fetchJSON<ModelConfigResponse>('/api/admin/models/config');
+
+export const updateModelConfig = (
+	modelId: string,
+	update: { is_active?: boolean; params?: Record<string, unknown> }
+) =>
+	fetchJSON(`/api/admin/models/${encodeURIComponent(modelId)}/config`, {
+		...jsonBody(update),
+		method: 'PUT'
+	});

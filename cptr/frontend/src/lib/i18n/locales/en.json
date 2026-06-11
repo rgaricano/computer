@@ -274,5 +274,19 @@
 	"admin.webCcBaseUrl": "Base URL",
 	"admin.webCcKey": "API Key",
 	"admin.webCcModel": "Model",
-	"admin.webCcHint": "Use any OpenAI-compatible endpoint (e.g. Perplexity Sonar, LiteLLM proxy)"
+	"admin.webCcHint": "Use any OpenAI-compatible endpoint (e.g. Perplexity Sonar, LiteLLM proxy)",
+
+	"admin.models": "Models",
+	"models.defaults": "Defaults",
+	"models.noDefaults": "No global defaults",
+	"models.noParams": "No parameters",
+	"models.noModels": "No models available",
+	"models.addConnection": "Add a connection first.",
+	"models.failedToLoad": "Failed to load model config",
+	"models.failedToToggle": "Failed to toggle model",
+	"models.failedToSave": "Failed to save",
+	"models.savedDefaults": "Saved global defaults",
+	"models.savedParams": "Saved params for {{name}}",
+	"models.add": "+ Add",
+	"models.save": "Save"
 }

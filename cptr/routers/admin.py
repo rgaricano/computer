@@ -353,3 +353,72 @@ class UpdateConnectionRequest(BaseModel):
     api_key: Optional[str] = None
     enabled: Optional[bool] = None
     models: Optional[list[str]] = None
+
+
+# ── Model config ─────────────────────────────────────────────
+
+CONFIG_KEY_CHAT_MODELS = "chat.models"
+
+
+@router.get("/models/config")
+async def get_model_config(request: Request):
+    """Get per-model config and full model list (including inactive) for the admin Models tab."""
+    require_admin(request)
+    config = await Config.get(CONFIG_KEY_CHAT_MODELS) or {}
+
+    # Build full model list from all enabled connections (same as chat.py
+    # get_models but without filtering inactive models).
+    from cptr.routers.chat import _get_connections, _get_connection_models
+
+    connections = [c for c in await _get_connections() if c.get("enabled", True)]
+    models = []
+    for conn in connections:
+        model_ids = await _get_connection_models(conn, request.app.state)
+        prefix = (conn.get("prefix_id") or "").strip()
+        for model_id in model_ids or []:
+            prefixed_id = f"{prefix}/{model_id}" if prefix else model_id
+            models.append(
+                {
+                    "id": prefixed_id,
+                    "name": model_id,
+                    "provider": conn.get("provider", ""),
+                    "connection_id": conn["id"],
+                }
+            )
+
+    return {"config": config, "models": models}
+
+
+class UpdateModelConfigRequest(BaseModel):
+    is_active: Optional[bool] = None
+    params: Optional[dict] = None
+
+
+@router.put("/models/{model_id:path}/config")
+async def update_model_config(
+    model_id: str, body: UpdateModelConfigRequest, request: Request
+):
+    """Update config for a specific model (or '*' for global defaults)."""
+    require_admin(request)
+    all_config = await Config.get(CONFIG_KEY_CHAT_MODELS) or {}
+
+    entry = all_config.get(model_id, {})
+
+    if body.is_active is not None:
+        entry["is_active"] = body.is_active
+
+    if body.params is not None:
+        entry["params"] = body.params
+
+    # Clean up empty entries
+    if not entry or (entry.keys() <= {"is_active"} and entry.get("is_active") is not False):
+        if not entry.get("params"):
+            all_config.pop(model_id, None)
+        else:
+            all_config[model_id] = entry
+    else:
+        all_config[model_id] = entry
+
+    await Config.upsert({CONFIG_KEY_CHAT_MODELS: all_config})
+    return {"ok": True}
+

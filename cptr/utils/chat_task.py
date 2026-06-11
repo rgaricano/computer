@@ -11,7 +11,9 @@ import logging
 import uuid
 from pathlib import Path
 
-from cptr.env import CHAT_MAX_ITERATIONS
+from cptr.env import CHAT_MAX_ITERATIONS, CHAT_TOOL_MAX_CHARS
+from cptr.utils.context import should_compact
+from cptr.utils.summarize import summarize_messages
 from cptr.models import Chat, ChatMessage, Config
 from cptr.socket.main import emit_to_user
 from cptr.utils.ai import (
@@ -398,12 +400,19 @@ async def generate_chat_title(
 # ── Message history ─────────────────────────────────────────
 
 
-async def _load_message_history(chat_id: str, message_id: str) -> list[dict]:
+async def _load_message_history(
+    chat_id: str, message_id: str
+) -> tuple[list[dict], str | None]:
     """Load the ancestor chain from message_id to root as LLM messages.
 
     Walks up via parent_id so only the active branch is included.
     The current message (message_id) is always included even if done=False,
     since it may contain completed tool calls from prior approval rounds.
+
+    If any message in the chain has a chat_summary, everything before it
+    is skipped and the summary is returned separately for the system prompt.
+
+    Returns (messages, chat_summary_or_None).
     """
     all_msgs = await ChatMessage.get_all_by_chat(chat_id)
     msg_map = {m.id: m for m in all_msgs}
@@ -415,6 +424,14 @@ async def _load_message_history(chat_id: str, message_id: str) -> list[dict]:
         chain.append(cur)
         cur = msg_map.get(cur.parent_id) if cur.parent_id else None
     chain.reverse()  # root → leaf
+
+    # Find the most recent message with a chat_summary
+    existing_summary = None
+    for i, m in enumerate(chain):
+        if m.chat_summary:
+            chain = chain[i:]  # keep this message and everything after
+            existing_summary = m.chat_summary
+            break
 
     result = []
     for m in chain:
@@ -511,11 +528,16 @@ async def _load_message_history(chat_id: str, message_id: str) -> list[dict]:
                     }
 
         result.append(entry)
-    return result
+    return result, existing_summary
 
 
 def _append_tool_to_messages(messages: list[dict], event: dict, result: str, provider: str):
     """Append a tool call + result to the message history for the next API call."""
+    # Guard against oversized tool outputs
+    if len(result) > CHAT_TOOL_MAX_CHARS:
+        half = CHAT_TOOL_MAX_CHARS // 2
+        result = result[:half] + "\n\n...(truncated)...\n\n" + result[-half:]
+
     # Add assistant message with tool_call
     messages.append(
         {
@@ -541,6 +563,30 @@ def _append_tool_to_messages(messages: list[dict], event: dict, result: str, pro
             "content": result,
         }
     )
+
+
+def _find_safe_split(messages: list[dict], target_keep: int) -> int:
+    """Find a safe split index that doesn't break tool call pairs.
+
+    Returns the index where keep_zone starts. Ensures:
+    - Never splits between an assistant tool_call and its tool result
+    - keep_zone doesn't start with a tool result message
+    - At least 2 messages are kept
+    """
+    n = len(messages)
+    split = max(2, n - target_keep)
+
+    # Walk forward from the initial split to find a safe boundary
+    while split < n - 1:
+        msg = messages[split]
+        # Don't start keep_zone with a tool result — it needs its preceding assistant
+        if msg.get("role") == "tool":
+            split += 1
+            continue
+        break
+
+    return min(split, n - 2)  # always keep at least 2
+
 
 
 # ── Connection resolution ───────────────────────────────────
@@ -651,7 +697,9 @@ async def run_chat_task(
         base_url = connection.get("base_url") or _default_base_url(provider)
 
         system = _load_system_prompt(workspace)
-        messages = await _load_message_history(chat_id, message_id)
+        messages, loaded_summary = await _load_message_history(chat_id, message_id)
+        if loaded_summary:
+            system += f"\n\n[CONVERSATION SUMMARY]\n{loaded_summary}"
         if regeneration_prompt:
             messages.append({"role": "user", "content": regeneration_prompt})
         tools = get_tool_list()
@@ -678,7 +726,53 @@ async def run_chat_task(
         if "tool_approval_mode" not in chat_params and "auto_approve_tools" in chat_params:
             approval_mode = "full" if chat_params["auto_approve_tools"] else "auto"
 
+        last_usage: dict | None = None  # real usage from last API call
+        new_messages_since: int = 0  # messages appended since last API call
+
+        # Request params: arbitrary key-value pairs merged into the API request body
+        # Merge order: global ("*") → per-model → chat overrides (chat wins)
+        chat_request_params = chat_params.get("request_params") or {}
+        global_rp = {}
+        model_rp = {}
+        try:
+            chat_models_config = await Config.get("chat.models") or {}
+            global_rp = chat_models_config.get("*", {}).get("params", {}).get("request_params", {})
+            model_rp = chat_models_config.get(model, {}).get("params", {}).get("request_params", {})
+        except Exception:
+            pass
+        request_params = {**global_rp, **model_rp, **chat_request_params} or None
+
         for _iteration in range(CHAT_MAX_ITERATIONS):
+            # ── Context compaction: summarize older messages if too large ──
+            if should_compact(messages, system, last_usage, new_messages_since):
+                target_keep = max(2, len(messages) * 2 // 5)
+                split_idx = _find_safe_split(messages, target_keep)
+                drop_zone = messages[:split_idx]
+                keep_zone = messages[split_idx:]
+
+                api_type = connection.get("api_type", "chat_completions")
+                summary = await summarize_messages(
+                    drop_zone, loaded_summary,
+                    provider, base_url, api_key, model,
+                    api_type=api_type,
+                )
+
+                # Store on the current message — this IS the cutoff
+                await ChatMessage.update(message_id, chat_summary=summary)
+                loaded_summary = summary
+
+                # Append summary to system prompt (works for all providers)
+                system = _load_system_prompt(workspace)
+                system += f"\n\n[CONVERSATION SUMMARY]\n{summary}"
+                messages = keep_zone
+                last_usage = None  # reset after compaction
+                new_messages_since = 0
+
+                logger.info(
+                    "[task %s] compacted: dropped %d msgs, kept %d, summary=%d chars",
+                    message_id[:8], len(drop_zone), len(keep_zone), len(summary),
+                )
+
             form_data = ChatCompletionForm(
                 model=model,
                 messages=messages,
@@ -687,11 +781,11 @@ async def run_chat_task(
             )
 
             if provider == "anthropic":
-                stream = stream_anthropic(form_data, base_url, api_key)
+                stream = stream_anthropic(form_data, base_url, api_key, request_params=request_params)
             elif connection.get("api_type") == "responses":
-                stream = stream_openai_responses(form_data, base_url, api_key)
+                stream = stream_openai_responses(form_data, base_url, api_key, request_params=request_params)
             else:
-                stream = stream_openai_completions(form_data, base_url, api_key)
+                stream = stream_openai_completions(form_data, base_url, api_key, request_params=request_params)
 
             restart = False
 
@@ -753,6 +847,7 @@ async def run_chat_task(
 
                         # Append to messages for next iteration
                         _append_tool_to_messages(messages, event, result, provider)
+                        new_messages_since += 2  # tool_call + tool_result
                         restart = True
                         break
 
@@ -776,6 +871,8 @@ async def run_chat_task(
                 elif event["type"] == "usage":
                     _flush_text()
                     usage = {k: v for k, v in event.items() if k != "type"}
+                    last_usage = usage
+                    new_messages_since = 0
                     logger.info(
                         "[task %s] save (usage): content=%d chars, output=%d items, types=%s",
                         message_id[:8],

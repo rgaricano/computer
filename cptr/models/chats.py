@@ -228,6 +228,7 @@ class ChatMessage(Base):
     output = Column(JSON, nullable=True)  # Responses API output items
     usage = Column(JSON, nullable=True)  # {input_tokens, output_tokens, ...}
     meta = Column(JSON, nullable=True)  # {files, followups, error, ...}
+    chat_summary = Column(Text, nullable=True)  # Compaction summary (covers all ancestors before this msg)
     created_at = Column(BigInteger, nullable=False)
 
     # ── Class methods ────────────────────────────────────────

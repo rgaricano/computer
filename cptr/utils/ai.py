@@ -63,6 +63,7 @@ async def chat_completion(
     system: str = "",
     max_tokens: int = 100,
     api_type: str = "chat_completions",
+    request_params: dict | None = None,
 ) -> str:
     """Simple non-streaming chat completion. Returns the text content.
 
@@ -78,6 +79,8 @@ async def chat_completion(
             }
             if system:
                 body["system"] = system
+            if request_params:
+                body.update(request_params)
             resp = await client.post(
                 f"{base_url}/messages",
                 json=body,
@@ -95,6 +98,8 @@ async def chat_completion(
             }
             if system:
                 body_r["instructions"] = system
+            if request_params:
+                body_r.update(request_params)
             resp = await client.post(
                 f"{base_url}/responses",
                 json=body_r,
@@ -105,13 +110,16 @@ async def chat_completion(
             all_messages = messages[:]
             if system:
                 all_messages.insert(0, {"role": "system", "content": system})
+            body_cc: dict = {
+                "model": model,
+                "messages": all_messages,
+                "max_completion_tokens": max_tokens,
+            }
+            if request_params:
+                body_cc.update(request_params)
             resp = await client.post(
                 f"{base_url}/chat/completions",
-                json={
-                    "model": model,
-                    "messages": all_messages,
-                    "max_completion_tokens": max_tokens,
-                },
+                json=body_cc,
                 headers={"Authorization": f"Bearer {api_key}"},
             )
         if resp.status_code >= 400:
@@ -200,7 +208,7 @@ def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
 
 
 async def stream_anthropic(
-    form_data: ChatCompletionForm, url: str, key: str
+    form_data: ChatCompletionForm, url: str, key: str, *, request_params: dict | None = None
 ) -> AsyncIterator[dict]:
     tools = [
         {
@@ -219,6 +227,8 @@ async def stream_anthropic(
         "stream": True,
         "max_tokens": 4096,
     }
+    if request_params:
+        body.update(request_params)
     # Remove None values
     body = {k: v for k, v in body.items() if v is not None}
     headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
@@ -234,11 +244,20 @@ async def stream_anthropic(
                     logger.info("[stream] anthropic status=%s", resp.status_code)
                     resp.raise_for_status()
                     current_block: dict = {}
+                    usage_data: dict = {}
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
                             continue
                         event = json.loads(line[6:])
                         etype = event.get("type")
+
+                        if etype == "message_start":
+                            msg_usage = event.get("message", {}).get("usage", {})
+                            if msg_usage:
+                                usage_data["input_tokens"] = msg_usage.get("input_tokens", 0)
+                                for cache_key in ("cache_read_input_tokens", "cache_creation_input_tokens"):
+                                    if msg_usage.get(cache_key):
+                                        usage_data[cache_key] = msg_usage[cache_key]
 
                         if etype == "content_block_start":
                             block = event["content_block"]
@@ -267,10 +286,11 @@ async def stream_anthropic(
                                 }
 
                         elif etype == "message_delta":
-                            usage = event.get("usage", {})
-                            if usage:
+                            delta_usage = event.get("usage", {})
+                            if delta_usage:
+                                usage_data["output_tokens"] = delta_usage.get("output_tokens", 0)
                                 emitted = True
-                                yield {"type": "usage", **usage}
+                                yield {"type": "usage", **usage_data}
 
                         elif etype == "message_stop":
                             emitted = True
@@ -321,7 +341,7 @@ def _to_openai_messages(messages: list[dict], instructions: str) -> list[dict]:
 
 
 async def stream_openai_completions(
-    form_data: ChatCompletionForm, url: str, key: str
+    form_data: ChatCompletionForm, url: str, key: str, *, request_params: dict | None = None
 ) -> AsyncIterator[dict]:
     tools = [
         {
@@ -343,6 +363,8 @@ async def stream_openai_completions(
     }
     if tools:
         body["tools"] = tools
+    if request_params:
+        body.update(request_params)
     headers = {"Authorization": f"Bearer {key}"}
 
     emitted = False
@@ -392,8 +414,13 @@ async def stream_openai_completions(
                                 }
 
                         if chunk.get("usage"):
+                            raw = chunk["usage"]
                             emitted = True
-                            yield {"type": "usage", **chunk["usage"]}
+                            yield {
+                                "type": "usage",
+                                "input_tokens": raw.get("prompt_tokens", 0),
+                                "output_tokens": raw.get("completion_tokens", 0),
+                            }
 
                     emitted = True
                     yield {"type": "done"}
@@ -460,7 +487,7 @@ def _to_responses_input(messages: list[dict], instructions: str) -> list[dict]:
 
 
 async def stream_openai_responses(
-    form_data: ChatCompletionForm, url: str, key: str
+    form_data: ChatCompletionForm, url: str, key: str, *, request_params: dict | None = None
 ) -> AsyncIterator[dict]:
     tools = [
         {
@@ -481,6 +508,8 @@ async def stream_openai_responses(
         body["instructions"] = form_data.instructions
     if tools:
         body["tools"] = tools
+    if request_params:
+        body.update(request_params)
     headers = {"Authorization": f"Bearer {key}"}
 
     emitted = False

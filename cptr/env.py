@@ -27,6 +27,7 @@ ENABLE_CHAT_RECONCILE_ON_STARTUP: bool = os.environ.get(
 ).lower() in ("true", "1", "yes")
 CHAT_TOOL_MAX_CHARS = int(os.environ.get("CHAT_TOOL_MAX_CHARS", "50000"))
 CHAT_TOOL_COMMAND_MAX_CHARS = int(os.environ.get("CHAT_TOOL_COMMAND_MAX_CHARS", "8000"))
+CHAT_COMPACT_TOKEN_THRESHOLD = int(os.environ.get("CHAT_COMPACT_TOKEN_THRESHOLD", "80000"))
 
 # ── AI stream settings ──────────────────────────────────────
 STREAM_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("CPTR_STREAM_CONNECT_TIMEOUT", "30"))

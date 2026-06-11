@@ -196,6 +196,13 @@ async def get_models(request: Request):
             )
 
     default_model = await Config.get("chat.default_model")
+
+    # Filter out inactive models
+    chat_models_config = await Config.get("chat.models") or {}
+    inactive = {k for k, v in chat_models_config.items() if v.get("is_active") is False}
+    if inactive:
+        models = [m for m in models if m["id"] not in inactive]
+
     return {"models": models, "default": default_model}
 
 

@@ -5,16 +5,47 @@
 	import Account from './Settings/Account.svelte';
 	import Keyboard from './Settings/Keyboard.svelte';
 	import About from './Settings/About.svelte';
+	import Users from './Admin/Users.svelte';
+	import Connections from './Admin/Connections.svelte';
+	import Models from './Admin/Models.svelte';
+	import AdminSettings from './Admin/Settings.svelte';
+	import { session } from '$lib/session';
 	import { t } from '$lib/i18n';
+
+	type Tab =
+		| 'general'
+		| 'keyboard'
+		| 'account'
+		| 'about'
+		| 'users'
+		| 'connections'
+		| 'models'
+		| 'admin_settings';
 
 	interface Props {
 		onclose: () => void;
-		initialTab?: 'general' | 'keyboard' | 'account' | 'about';
+		initialTab?: Tab;
 	}
 
 	let { onclose, initialTab = 'general' }: Props = $props();
 
-	let activeTab = $state<'general' | 'keyboard' | 'account' | 'about'>(initialTab);
+	let activeTab = $state<Tab>(initialTab);
+
+	const isAdmin = $derived($session?.role === 'admin');
+
+	const personalTabs: { id: Tab; label: string; icon: string }[] = [
+		{ id: 'general', label: 'General', icon: 'settings' },
+		{ id: 'keyboard', label: 'Keyboard', icon: 'terminal' },
+		{ id: 'account', label: 'Account', icon: 'user' },
+		{ id: 'about', label: 'About', icon: 'info' }
+	];
+
+	const adminTabs: { id: Tab; label: string; icon: string }[] = [
+		{ id: 'users', label: 'Users', icon: 'user' },
+		{ id: 'connections', label: 'Connections', icon: 'plug' },
+		{ id: 'models', label: 'Models', icon: 'cube' },
+		{ id: 'admin_settings', label: 'Configuration', icon: 'shield' }
+	];
 </script>
 
 <Modal
@@ -32,18 +63,38 @@
 				<Icon name="chevron-left" size={12} />
 				<span>{$t('settings.back')}</span>
 			</button>
-			{#each [{ id: 'general', label: $t('settings.general'), icon: 'settings' }, { id: 'keyboard', label: 'Keyboard', icon: 'terminal' }, { id: 'account', label: $t('settings.account'), icon: 'user' }, { id: 'about', label: $t('settings.about'), icon: 'info' }] as tab}
+
+			<!-- Personal -->
+			{#each personalTabs as tab}
 				<button
 					class="flex items-center gap-1.5 h-7 px-2 md:w-full shrink-0 rounded-lg text-xs text-left transition-colors duration-75
 						{activeTab === tab.id
 						? 'font-medium text-gray-900 dark:text-white bg-gray-100 dark:bg-white/6'
 						: 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}"
-					onclick={() => (activeTab = tab.id as typeof activeTab)}
+					onclick={() => (activeTab = tab.id)}
 				>
 					<Icon name={tab.icon} size={14} />
 					{tab.label}
 				</button>
 			{/each}
+
+			<!-- Admin section -->
+			{#if isAdmin}
+				<span class="hidden md:block text-[10px] text-gray-400 dark:text-gray-600 px-2 mt-2 mb-0.5">Admin</span>
+
+				{#each adminTabs as tab}
+					<button
+						class="flex items-center gap-1.5 h-7 px-2 md:w-full shrink-0 rounded-lg text-xs text-left transition-colors duration-75
+							{activeTab === tab.id
+							? 'font-medium text-gray-900 dark:text-white bg-gray-100 dark:bg-white/6'
+							: 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}"
+						onclick={() => (activeTab = tab.id)}
+					>
+						<Icon name={tab.icon} size={14} />
+						{tab.label}
+					</button>
+				{/each}
+			{/if}
 		</div>
 	</nav>
 
@@ -56,6 +107,14 @@
 			<Account />
 		{:else if activeTab === 'about'}
 			<About />
+		{:else if activeTab === 'users'}
+			<Users />
+		{:else if activeTab === 'connections'}
+			<Connections />
+		{:else if activeTab === 'models'}
+			<Models />
+		{:else if activeTab === 'admin_settings'}
+			<AdminSettings />
 		{/if}
 	</div>
 </Modal>

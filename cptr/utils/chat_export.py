@@ -47,6 +47,8 @@ async def export_chat_to_file(chat_id: str) -> None:
             entry["output"] = m.output or []
             if m.usage:
                 entry["usage"] = m.usage
+        if m.chat_summary:
+            entry["chat_summary"] = m.chat_summary
 
         msg_map[m.id] = entry
 
@@ -58,6 +60,7 @@ async def export_chat_to_file(chat_id: str) -> None:
     chat_data = {
         "id": chat.id,
         "title": chat.title,
+        "summary": chat.summary,
         "created_at": chat.created_at,
         "updated_at": chat.updated_at,
         "history": {
