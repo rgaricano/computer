@@ -78,6 +78,14 @@
 	"quickOpen.searchFiles": "Search files...",
 	"quickOpen.noFiles": "No files found",
 
+	"search.placeholder": "Search...",
+	"search.search": "Search",
+	"search.chats": "Chats",
+	"search.files": "Files",
+	"search.noResults": "No results found",
+	"search.recentChats": "Recent chats",
+	"search.noRecentChats": "No recent chats",
+
 	"settings.back": "Back",
 	"settings.general": "General",
 	"settings.account": "Account",
@@ -259,5 +267,12 @@
 	"admin.webTavilyHint": "Get your API key at tavily.com",
 	"admin.webBraveKey": "Brave API Key",
 	"admin.webBraveHint": "Get your API key at brave.com/search/api",
-	"admin.webDuckDuckGoNote": "DuckDuckGo requires no API key (fallback)."
+	"admin.webDuckDuckGoNote": "DuckDuckGo requires no API key (fallback).",
+	"admin.webPerplexityKey": "Perplexity API Key",
+	"admin.webPerplexityHint": "Get your API key at perplexity.ai",
+	"admin.webChatCompletions": "Chat Completions",
+	"admin.webCcBaseUrl": "Base URL",
+	"admin.webCcKey": "API Key",
+	"admin.webCcModel": "Model",
+	"admin.webCcHint": "Use any OpenAI-compatible endpoint (e.g. Perplexity Sonar, LiteLLM proxy)"
 }

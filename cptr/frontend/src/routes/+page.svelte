@@ -14,6 +14,9 @@
 		openInSplit,
 		openTabInSplit,
 		setSplitDirection,
+		openChatTab,
+		openFileTab,
+		setFileBrowserCwd,
 		appVersion,
 		showChangelog
 	} from '$lib/stores';
@@ -40,14 +43,50 @@
 	// ── URL-driven workspace loading ───────────────────────────────
 	// The workspace path comes from the URL query param: ?workspace=/path/to/dir
 	// Each browser tab has its own URL → its own workspace.
+	// Intent params (chatId, file, dir) are processed AFTER loading.
 
 	let lastLoadedPath = $state<string | null>(null);
+
+	function processIntentParams() {
+		const url = new URL($page.url);
+		const chatId = url.searchParams.get('chatId');
+		const filePath = url.searchParams.get('file');
+		const dirPath = url.searchParams.get('dir');
+
+		let dirty = false;
+		if (url.searchParams.has('chatId')) {
+			if (chatId) {
+				openChatTab(chatId);
+			} else {
+				openChatTab();
+			}
+			url.searchParams.delete('chatId');
+			dirty = true;
+		}
+		if (filePath) {
+			openFileTab(filePath);
+			url.searchParams.delete('file');
+			dirty = true;
+		}
+		if (dirPath) {
+			setFileBrowserCwd(dirPath);
+			url.searchParams.delete('dir');
+			dirty = true;
+		}
+		if (dirty) {
+			history.replaceState(history.state, '', url.pathname + url.search);
+		}
+	}
 
 	$effect(() => {
 		const wsPath = $page.url.searchParams.get('workspace');
 		if (wsPath && wsPath !== lastLoadedPath) {
+			// New workspace — load then process intents
 			lastLoadedPath = wsPath;
-			loadWorkspace(wsPath);
+			loadWorkspace(wsPath).then(() => processIntentParams());
+		} else if (wsPath && wsPath === lastLoadedPath) {
+			// Same workspace — process intents immediately
+			processIntentParams();
 		} else if (!wsPath) {
 			lastLoadedPath = null;
 			currentWorkspace.set(null);

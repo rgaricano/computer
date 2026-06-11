@@ -190,15 +190,12 @@ async def execute_automation(automation, webhook_payload: str | None = None) -> 
             model=bare_model,
         )
 
-        # Notify frontend
+        # Notify frontend (standard chat event so sidebar updates)
         await emit_to_user(
             automation.user_id,
             {
-                "type": "automation:result",
-                "automation_id": automation.id,
-                "name": automation.name,
                 "chat_id": chat.id,
-                "status": "success",
+                "title": automation.name,
             },
         )
 

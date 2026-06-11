@@ -117,6 +117,101 @@ class Chat(Base):
             await db.commit()
             return result.rowcount > 0
 
+    @staticmethod
+    async def search_by_text(
+        user_id: str,
+        query: str,
+        limit: int = 10,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Search chats by title AND message content (case-insensitive).
+
+        Returns dicts with chat fields + 'match_type' ('title' | 'message')
+        and 'snippet' (matching message excerpt or null).
+        Title matches rank first.
+        """
+        from sqlalchemy import literal, union_all
+
+        async with await get_db() as db:
+            pattern = f"%{query}%"
+
+            # 1) Chats matching by title
+            title_q = (
+                select(
+                    Chat.id,
+                    Chat.title,
+                    Chat.summary,
+                    Chat.meta,
+                    Chat.updated_at,
+                    Chat.created_at,
+                    literal("title").label("match_type"),
+                    literal("").label("snippet"),
+                )
+                .where(Chat.user_id == user_id)
+                .where(Chat.title.ilike(pattern))
+            )
+
+            # 2) Chats matching by message content (exclude title-matched)
+            message_q = (
+                select(
+                    Chat.id,
+                    Chat.title,
+                    Chat.summary,
+                    Chat.meta,
+                    Chat.updated_at,
+                    Chat.created_at,
+                    literal("message").label("match_type"),
+                    ChatMessage.content.label("snippet"),
+                )
+                .join(ChatMessage, ChatMessage.chat_id == Chat.id)
+                .where(Chat.user_id == user_id)
+                .where(ChatMessage.content.ilike(pattern))
+                .where(~Chat.title.ilike(pattern))  # avoid duplicates
+                .group_by(Chat.id)  # one result per chat
+            )
+
+            # Union, order by match_type (title first), then recency
+            combined = union_all(title_q, message_q).subquery()
+            result = await db.execute(
+                select(combined)
+                .order_by(combined.c.match_type, combined.c.updated_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+
+            rows = result.all()
+            return [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "summary": r.summary,
+                    "meta": r.meta,
+                    "updated_at": r.updated_at,
+                    "created_at": r.created_at,
+                    "match_type": r.match_type,
+                    "snippet": _extract_snippet(r.snippet, query) if r.snippet else None,
+                }
+                for r in rows
+            ]
+
+
+def _extract_snippet(content: str, query: str, context_chars: int = 80) -> str | None:
+    """Extract a short snippet around the first match in message content."""
+    if not content:
+        return None
+    lower = content.lower()
+    idx = lower.find(query.lower())
+    if idx == -1:
+        return content[: context_chars * 2] + ("..." if len(content) > context_chars * 2 else "")
+    start = max(0, idx - context_chars)
+    end = min(len(content), idx + len(query) + context_chars)
+    snippet = content[start:end]
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(content):
+        snippet = snippet + "..."
+    return snippet
+
 
 class ChatMessage(Base):
     """A single message in a chat conversation."""

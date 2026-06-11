@@ -14,6 +14,10 @@
 	let exaKey = $state('');
 	let tavilyKey = $state('');
 	let braveKey = $state('');
+	let perplexityKey = $state('');
+	let ccKey = $state('');
+	let ccBaseUrl = $state('');
+	let ccModel = $state('');
 
 	async function loadConfig() {
 		try {
@@ -21,6 +25,10 @@
 			exaKey = config['web.exa_api_key'] || '';
 			tavilyKey = config['web.tavily_api_key'] || '';
 			braveKey = config['web.brave_api_key'] || '';
+			perplexityKey = config['web.perplexity_api_key'] || '';
+			ccKey = config['web.chat_completions_api_key'] || '';
+			ccBaseUrl = config['web.chat_completions_base_url'] || '';
+			ccModel = config['web.chat_completions_model'] || '';
 		} catch {
 			toast.error($t('admin.failedToLoadConfig'));
 		} finally {
@@ -106,7 +114,9 @@
 					<option value="exa">Exa</option>
 					<option value="tavily">Tavily</option>
 					<option value="brave">Brave</option>
+					<option value="perplexity">Perplexity</option>
 					<option value="duckduckgo">DuckDuckGo</option>
+					<option value="chat_completions">{$t('admin.webChatCompletions')}</option>
 				</select>
 			</div>
 
@@ -170,6 +180,68 @@
 				<p class="text-[11px] text-gray-400 dark:text-gray-600 mt-2">
 					{$t('admin.webDuckDuckGoNote')}
 				</p>
+			{:else if provider === 'perplexity'}
+				<div class="mt-3">
+					<label class="block text-[13px] text-gray-700 dark:text-gray-300 mb-1"
+						>{$t('admin.webPerplexityKey')}</label
+					>
+					<input
+						type="password"
+						class="w-full text-[13px] bg-gray-50 dark:bg-white/4 border border-gray-200 dark:border-white/8 rounded-lg px-2.5 py-1.5 outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400 dark:placeholder:text-gray-600"
+						placeholder="pplx-..."
+						bind:value={perplexityKey}
+						onblur={() => saveKey('web.perplexity_api_key', perplexityKey)}
+						disabled={saving}
+					/>
+					<p class="text-[11px] text-gray-400 dark:text-gray-600 mt-0.5">
+						{$t('admin.webPerplexityHint')}
+					</p>
+				</div>
+			{:else if provider === 'chat_completions'}
+				<div class="mt-3 space-y-3">
+					<div>
+						<label class="block text-[13px] text-gray-700 dark:text-gray-300 mb-1"
+							>{$t('admin.webCcBaseUrl')}</label
+						>
+						<input
+							type="text"
+							class="w-full text-[13px] bg-gray-50 dark:bg-white/4 border border-gray-200 dark:border-white/8 rounded-lg px-2.5 py-1.5 outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400 dark:placeholder:text-gray-600"
+							placeholder="https://api.perplexity.ai/v1"
+							bind:value={ccBaseUrl}
+							onblur={() => saveKey('web.chat_completions_base_url', ccBaseUrl)}
+							disabled={saving}
+						/>
+					</div>
+					<div>
+						<label class="block text-[13px] text-gray-700 dark:text-gray-300 mb-1"
+							>{$t('admin.webCcKey')}</label
+						>
+						<input
+							type="password"
+							class="w-full text-[13px] bg-gray-50 dark:bg-white/4 border border-gray-200 dark:border-white/8 rounded-lg px-2.5 py-1.5 outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400 dark:placeholder:text-gray-600"
+							placeholder="sk-..."
+							bind:value={ccKey}
+							onblur={() => saveKey('web.chat_completions_api_key', ccKey)}
+							disabled={saving}
+						/>
+					</div>
+					<div>
+						<label class="block text-[13px] text-gray-700 dark:text-gray-300 mb-1"
+							>{$t('admin.webCcModel')}</label
+						>
+						<input
+							type="text"
+							class="w-full text-[13px] bg-gray-50 dark:bg-white/4 border border-gray-200 dark:border-white/8 rounded-lg px-2.5 py-1.5 outline-none text-gray-700 dark:text-gray-300 placeholder:text-gray-400 dark:placeholder:text-gray-600"
+							placeholder="sonar-pro"
+							bind:value={ccModel}
+							onblur={() => saveKey('web.chat_completions_model', ccModel)}
+							disabled={saving}
+						/>
+					</div>
+					<p class="text-[11px] text-gray-400 dark:text-gray-600">
+						{$t('admin.webCcHint')}
+					</p>
+				</div>
 			{/if}
 		{/if}
 

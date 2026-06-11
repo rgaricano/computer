@@ -138,6 +138,7 @@ export const planMode = writable(false);
 export const appVersion = writable('');
 export const lastSeenVersion = writable('');
 export const showChangelog = writable(false);
+export const showSearch = writable(false);
 /** @deprecated Use toolApprovalMode */
 export const autoApproveTools = {
 	subscribe: toolApprovalMode.subscribe,
@@ -666,7 +667,7 @@ export function openPreviewTab(port: number, targetGroupId?: string): void {
 	}));
 }
 
-export function openChatTab(chatId?: string, targetGroupId?: string, label?: string): void {
+export function openChatTab(chatId?: string, targetGroupId?: string): void {
 	const ws = get(currentWorkspace);
 	if (!ws) return;
 
@@ -681,12 +682,21 @@ export function openChatTab(chatId?: string, targetGroupId?: string, label?: str
 			setActiveTab(existing.id, gid);
 			return;
 		}
+	} else {
+		// No chatId — reuse an existing new/pending chat tab if one is open
+		const existing = group.tabs.find(
+			(t) => t.type === 'chat' && (t.path?.startsWith('new-') || t.path?.startsWith('pending-'))
+		);
+		if (existing) {
+			setActiveTab(existing.id, gid);
+			return;
+		}
 	}
 
 	const newTab: Tab = {
 		id: nextId(),
 		type: 'chat',
-		label: label || 'New Chat',
+		label: chatId ? 'Chat' : 'New Chat',
 		path: chatId || `new-${Date.now()}`
 	};
 

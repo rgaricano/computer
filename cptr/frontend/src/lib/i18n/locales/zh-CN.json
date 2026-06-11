@@ -258,5 +258,12 @@
 	"admin.webTavilyHint": "在 tavily.com 获取你的 API 密钥",
 	"admin.webBraveKey": "Brave API 密钥",
 	"admin.webBraveHint": "在 brave.com/search/api 获取你的 API 密钥",
-	"admin.webDuckDuckGoNote": "DuckDuckGo 不需要 API 密钥（备用）。"
+	"admin.webDuckDuckGoNote": "DuckDuckGo 不需要 API 密钥（备用）。",
+	"admin.webPerplexityKey": "Perplexity API 密钥",
+	"admin.webPerplexityHint": "在 perplexity.ai 获取你的 API 密钥",
+	"admin.webChatCompletions": "Chat Completions",
+	"admin.webCcBaseUrl": "基础 URL",
+	"admin.webCcKey": "API 密钥",
+	"admin.webCcModel": "模型",
+	"admin.webCcHint": "使用任何 OpenAI 兼容端点（如 Perplexity Sonar、LiteLLM 代理）"
 }

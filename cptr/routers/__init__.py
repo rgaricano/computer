@@ -8,6 +8,7 @@ from cptr.routers.events import router as events_router
 from cptr.routers.files import router as files_router
 from cptr.routers.git import router as git_router
 from cptr.routers.proxy import router as proxy_router
+from cptr.routers.search import router as search_router
 from cptr.routers.state import router as state_router
 from cptr.routers.terminal import router as terminal_router
 from cptr.routers.workspace import router as workspace_router
@@ -21,6 +22,7 @@ __all__ = [
     "files_router",
     "git_router",
     "proxy_router",
+    "search_router",
     "state_router",
     "terminal_router",
     "workspace_router",

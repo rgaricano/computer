@@ -258,5 +258,12 @@
 	"admin.webTavilyHint": "API-Schlüssel unter tavily.com erhalten",
 	"admin.webBraveKey": "Brave-API-Schlüssel",
 	"admin.webBraveHint": "API-Schlüssel unter brave.com/search/api erhalten",
-	"admin.webDuckDuckGoNote": "DuckDuckGo benötigt keinen API-Schlüssel (Fallback)."
+	"admin.webDuckDuckGoNote": "DuckDuckGo benötigt keinen API-Schlüssel (Fallback).",
+	"admin.webPerplexityKey": "Perplexity API-Schlüssel",
+	"admin.webPerplexityHint": "API-Schlüssel unter perplexity.ai erhalten",
+	"admin.webChatCompletions": "Chat Completions",
+	"admin.webCcBaseUrl": "Basis-URL",
+	"admin.webCcKey": "API-Schlüssel",
+	"admin.webCcModel": "Modell",
+	"admin.webCcHint": "Beliebiger OpenAI-kompatibler Endpunkt (z. B. Perplexity Sonar, LiteLLM-Proxy)"
 }

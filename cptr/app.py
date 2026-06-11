@@ -14,6 +14,7 @@ from cptr.routers import (
     files_router,
     git_router,
     proxy_router,
+    search_router,
     state_router,
     terminal_router,
     workspace_router,
@@ -27,6 +28,14 @@ app = FastAPI()
 
 @app.on_event("startup")
 async def startup():
+    # Use OS certificate store (Windows CertStore, macOS Keychain, etc.)
+    # instead of the bundled certifi CA bundle — fixes #31.
+    import logging as _logging
+    import truststore
+
+    truststore.inject_into_ssl()
+    _logging.getLogger(__name__).info("truststore: using system certificate store")
+
     await init_db()
     from cptr.env import STARTUP_TOKEN
 
@@ -182,6 +191,7 @@ app.include_router(events_router)
 app.include_router(files_router)
 app.include_router(git_router)
 app.include_router(proxy_router)
+app.include_router(search_router)
 app.include_router(state_router)
 app.include_router(terminal_router)
 app.include_router(workspace_router)

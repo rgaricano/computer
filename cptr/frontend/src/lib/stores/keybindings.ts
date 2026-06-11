@@ -35,6 +35,7 @@ export const ACTION_IDS = [
 	'nextTab',
 	'prevTab',
 	'quickOpen',
+	'searchAll',
 	'openSettings',
 	'toggleSplit',
 	'toggleSidebar'
@@ -52,6 +53,7 @@ export const ACTION_LABELS: Record<ActionId, string> = {
 	nextTab: 'Next Tab',
 	prevTab: 'Previous Tab',
 	quickOpen: 'Quick Open',
+	searchAll: 'Search',
 	openSettings: 'Open Settings',
 	toggleSplit: 'Toggle Split',
 	toggleSidebar: 'Toggle Sidebar'
@@ -67,6 +69,7 @@ export const DEFAULT_KEYBINDINGS: Record<ActionId, string> = {
 	nextTab: 'Cmd+Shift+]',
 	prevTab: 'Cmd+Shift+[',
 	quickOpen: 'Cmd+K',
+	searchAll: 'Cmd+Shift+F',
 	openSettings: 'Cmd+.',
 	toggleSplit: 'Cmd+\\',
 	toggleSidebar: 'Cmd+Shift+S'
@@ -231,6 +234,7 @@ export function executeAction(
 	callbacks?: {
 		toggleQuickOpen?: () => void;
 		toggleSettings?: () => void;
+		toggleSearch?: () => void;
 	}
 ): boolean {
 	switch (action) {
@@ -275,6 +279,10 @@ export function executeAction(
 
 		case 'openSettings':
 			callbacks?.toggleSettings?.();
+			return true;
+
+		case 'searchAll':
+			callbacks?.toggleSearch?.();
 			return true;
 
 		case 'toggleSplit': {

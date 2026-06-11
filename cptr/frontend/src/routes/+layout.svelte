@@ -9,7 +9,7 @@
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import ShortcutBar from '$lib/components/ShortcutBar.svelte';
 	import GitBar from '$lib/components/GitBar.svelte';
-	import QuickOpen from '$lib/components/QuickOpen.svelte';
+	import SearchModal from '$lib/components/SearchModal.svelte';
 	import SettingsModal from '$lib/components/SettingsModal.svelte';
 	import AuthScreen from '$lib/components/AuthScreen.svelte';
 	import ChangelogModal from '$lib/components/ChangelogModal.svelte';
@@ -26,7 +26,8 @@
 		closeGroup,
 		appVersion,
 		lastSeenVersion,
-		showChangelog
+		showChangelog,
+		showSearch
 	} from '$lib/stores';
 	import { matchKeybinding, executeAction } from '$lib/stores/keybindings';
 	import { systemEvents } from '$lib/stores/systemEvents.svelte';
@@ -38,7 +39,6 @@
 	import { refreshChatState, bindGlobalChatListener } from '$lib/stores/chat';
 
 	let { children } = $props();
-	let showQuickOpen = $state(false);
 	let showSettings = $state(false);
 
 	// Auth state
@@ -180,10 +180,13 @@
 		e.preventDefault();
 		executeAction(action, {
 			toggleQuickOpen: () => {
-				showQuickOpen = !showQuickOpen;
+				showSearch.update((v) => !v);
 			},
 			toggleSettings: () => {
 				showSettings = !showSettings;
+			},
+			toggleSearch: () => {
+				showSearch.update((v) => !v);
 			}
 		});
 	}
@@ -270,8 +273,8 @@
 		</div>
 	</div>
 
-	{#if showQuickOpen}
-		<QuickOpen onclose={() => (showQuickOpen = false)} />
+	{#if $showSearch}
+		<SearchModal onclose={() => showSearch.set(false)} />
 	{/if}
 	{#if showSettings}
 		<SettingsModal onclose={() => (showSettings = false)} />
@@ -286,8 +289,10 @@
 <Toaster
 	position="top-right"
 	theme="system"
+	closeButton
+	richColors
 	toastOptions={{
 		style:
-			'font-size: 12px; font-family: var(--font-sans); background: transparent; border: none; box-shadow: none; border-radius: 8px; padding: 0;'
+			'font-size: 12px; font-family: var(--font-sans); border-radius: 8px;'
 	}}
 />
