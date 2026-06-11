@@ -149,12 +149,11 @@
 {/snippet}
 
 <div class="flex flex-col h-full">
-	<h2 class="text-sm font-medium text-gray-900 dark:text-white mb-4 shrink-0">{$t('admin.models')}</h2>
-
 	{#if loading}
 		<div class="flex justify-center py-8"><Spinner size={16} /></div>
 	{:else}
 		<div class="flex-1 min-h-0 overflow-y-auto">
+			<h2 class="text-sm font-medium text-gray-900 dark:text-white mb-4">{$t('admin.models')}</h2>
 			<!-- Global defaults -->
 			<button
 				class="group flex items-center gap-2 w-full h-7 text-left"
