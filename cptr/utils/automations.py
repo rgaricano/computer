@@ -140,7 +140,7 @@ async def execute_automation(automation, webhook_payload: str | None = None) -> 
             meta={
                 "workspace": workspace,
                 "automation_id": automation.id,
-                "params": {},
+                "params": {"tool_approval_mode": "full"},
             },
             created_at=now_ms(),
         )
