@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-06-12
+
+### Added
+
+- 🌉 **OpenAI-compatible gateway.** Expose cptr workspaces through `/v1/models` and `/v1/chat/completions`, so Open WebUI and other OpenAI-compatible clients can use each workspace as a model with the full cptr agent loop.
+- 🔑 **Gateway API keys.** New Gateway admin settings tab for creating, copying, listing, and deleting API keys. Keys are stored hashed and newly generated keys are only shown once.
+
+### Changed
+
+- 🔄 **Gateway streaming support.** Chat tasks can now stream assistant deltas into an OpenAI-style SSE response while still updating cptr chats and sidebar state.
+- 🧭 **Frontend dev proxy.** The Vite dev server now proxies `/v1` gateway requests to the backend during local development.
+
 ## [0.3.2] - 2026-06-12
 
 ### Added
