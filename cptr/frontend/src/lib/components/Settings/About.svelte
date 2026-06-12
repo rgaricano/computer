@@ -22,18 +22,17 @@
 				>v{$appVersion}</button
 			>
 		{/if}
+		{#if $updateAvailable}
+			<span class="text-[11px] text-gray-300 dark:text-gray-600">·</span>
+			<a
+				href="https://github.com/open-webui/computer/releases"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+				>v{$latestVersion} available</a
+			>
+		{/if}
 	</div>
-
-	{#if $updateAvailable}
-		<a
-			href="https://github.com/open-webui/computer/releases"
-			target="_blank"
-			rel="noopener noreferrer"
-			class="inline-block mt-1 text-[11px] text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
-		>
-			{$t('update.updateAvailable', { version: $latestVersion })}
-		</a>
-	{/if}
 
 	<p class="text-[13px] text-gray-500 mt-0.5 mb-4">{$t('app.tagline')}</p>
 

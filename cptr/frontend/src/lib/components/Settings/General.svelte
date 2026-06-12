@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import Icon from '../Icon.svelte';
-	import { theme, streamingBehavior } from '$lib/stores';
+	import { theme, streamingBehavior, showUpdateToastPref } from '$lib/stores';
 	import type { Theme, StreamingBehavior } from '$lib/stores';
 	import { t, locale, changeLocale, supportedLocales } from '$lib/i18n';
 	import { notificationsEnabled, notificationSound } from '$lib/stores/chat';
 	import { fetchJSON } from '$lib/apis';
+	import { session } from '$lib/session';
 	import ToggleSwitch from '../common/ToggleSwitch.svelte';
 	import { onMount } from 'svelte';
 
@@ -98,6 +99,17 @@
 		<p class="text-[11px] text-gray-400 dark:text-gray-600 -mt-1">
 			Show OS-level notifications when a task completes and the tab is not focused.
 		</p>
+
+		<!-- Update notifications toggle (admin only) -->
+		{#if $session?.role === 'admin'}
+			<label class="flex items-center justify-between cursor-pointer">
+				<span class="text-xs text-gray-600 dark:text-gray-400">Update notifications</span>
+				<ToggleSwitch value={$showUpdateToastPref} onchange={(v) => showUpdateToastPref.set(v)} />
+			</label>
+			<p class="text-[11px] text-gray-400 dark:text-gray-600 -mt-1">
+				Show a toast when a new version of cptr is available.
+			</p>
+		{/if}
 
 		<!-- Sound toggle -->
 		<label class="flex items-center justify-between cursor-pointer">

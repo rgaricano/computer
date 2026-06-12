@@ -30,7 +30,8 @@
 		latestVersion,
 		updateAvailable,
 		showChangelog,
-		showSearch
+		showSearch,
+		showUpdateToastPref
 	} from '$lib/stores';
 	import { matchKeybinding, executeAction } from '$lib/stores/keybindings';
 	import { systemEvents } from '$lib/stores/systemEvents.svelte';
@@ -186,6 +187,7 @@
 		try {
 			const sess = $session;
 			if (!sess || sess.role !== 'admin') return;
+			if (!$showUpdateToastPref) return;
 
 			// 24-hour dismiss cooldown
 			const dismissed = localStorage.getItem('dismissedUpdateToast');
