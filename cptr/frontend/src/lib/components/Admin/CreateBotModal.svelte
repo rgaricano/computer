@@ -59,7 +59,10 @@
 
 	const platformHints: Record<string, string> = {
 		telegram: 'Create a bot via @BotFather',
-		discord: 'Create a bot in the Developer Portal'
+		discord: 'Create a bot in the Developer Portal',
+		slack: 'Bot Token | App Token (pipe-separated)',
+		whatsapp: 'Access Token | Phone Number ID (pipe-separated)',
+		signal: 'signal-cli URL | Phone Number (pipe-separated)'
 	};
 
 	async function handleVerify() {
@@ -146,6 +149,9 @@
 					>
 						<option value="telegram">Telegram</option>
 						<option value="discord">Discord</option>
+						<option value="slack">Slack</option>
+						<option value="whatsapp">WhatsApp</option>
+						<option value="signal">Signal</option>
 					</select>
 				</div>
 			</div>

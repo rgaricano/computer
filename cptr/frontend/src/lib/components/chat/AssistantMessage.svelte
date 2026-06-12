@@ -380,8 +380,19 @@
 							}}
 						>
 							<div class="flex items-center gap-2 px-3 pt-2.5 pb-0.5">
-								<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-3.5 shrink-0 text-gray-400 dark:text-gray-500">
-									<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke-width="1.5"
+									stroke="currentColor"
+									class="size-3.5 shrink-0 text-gray-400 dark:text-gray-500"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+									/>
 								</svg>
 								<span class="text-xs font-medium text-gray-800 dark:text-gray-100"
 									>{artifact.title || 'Artifact'}</span
@@ -404,7 +415,7 @@
 						{@const isGroupOpen = expandedGroups.has(groupIdx)}
 						{@const hasPendingApproval = calls.some((c: any) => c.status === 'pending')}
 
-						<div class="w-full min-w-0">
+						<div class="w-full min-w-0 flex flex-col my-0.5">
 							<!-- Group header -->
 							<button
 								class="w-full min-w-0 text-left text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition cursor-pointer"
@@ -412,7 +423,9 @@
 								aria-expanded={isGroupOpen}
 								onclick={() => toggleGroupExpanded(groupIdx)}
 							>
-								<div class="flex items-center gap-1.5 text-sm min-w-0 {hasPending ? 'shimmer' : ''}">
+								<div
+									class="flex items-center gap-1.5 text-sm min-w-0 {hasPending ? 'shimmer' : ''}"
+								>
 									<!-- Status icon -->
 									{#if hasPending}
 										<div class="flex justify-center text-center">
@@ -546,14 +559,16 @@
 											{@const isExpanded = expandedCalls.has(callId)}
 											{@const pairedOutput = outputs.get(item.call_id)}
 
-											<div class="w-full min-w-0">
+											<div class="w-full min-w-0 flex flex-col">
 												<!-- Individual tool call row -->
 												<button
 													class="w-full min-w-0 text-left text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition cursor-pointer"
 													onclick={() => toggleCallExpanded(callId)}
 												>
 													<div
-														class="flex items-center gap-1.5 text-sm min-w-0 {isExecuting ? 'shimmer' : ''}"
+														class="flex items-center gap-1.5 text-sm min-w-0 {isExecuting
+															? 'shimmer'
+															: ''}"
 													>
 														<!-- Status icon -->
 														{#if isExecuting}
@@ -803,7 +818,8 @@
 								<div class="mt-1 space-y-0.5">
 									{#each calls.filter((c: any) => c.status === 'pending') as item}
 										<div class="flex items-center gap-2 py-1 px-1">
-											<span class="text-xs text-gray-500 dark:text-gray-400 flex-1 min-w-0 line-clamp-1"
+											<span
+												class="text-xs text-gray-500 dark:text-gray-400 flex-1 min-w-0 line-clamp-1"
 												>{toolLabel(item.name, item.arguments || {})}</span
 											>
 											<span class="flex gap-1 shrink-0">
@@ -990,12 +1006,15 @@
 									{#each Object.entries(usage) as [key, value]}
 										<div class="flex justify-between gap-4">
 											<span class="text-gray-400 dark:text-gray-400">{formatUsageLabel(key)}</span>
-											<span class="tabular-nums text-white dark:text-gray-200">{formatUsageValue(key, value)}</span>
+											<span class="tabular-nums text-white dark:text-gray-200"
+												>{formatUsageValue(key, value)}</span
+											>
 										</div>
 									{/each}
 								</div>
 								<!-- Arrow -->
-								<div class="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0
+								<div
+									class="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0
 									border-l-[5px] border-l-transparent
 									border-r-[5px] border-r-transparent
 									border-t-[5px] border-t-gray-900 dark:border-t-gray-800"
@@ -1008,5 +1027,3 @@
 		{/if}
 	{/if}
 </div>
-
-

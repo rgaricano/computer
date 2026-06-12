@@ -304,6 +304,18 @@ class BotManager:
             from cptr.utils.adapters.discord import DiscordAdapter
             return DiscordAdapter(token=token)
 
+        if bot["platform"] == "slack":
+            from cptr.utils.adapters.slack import SlackAdapter
+            return SlackAdapter(token=token)
+
+        if bot["platform"] == "whatsapp":
+            from cptr.utils.adapters.whatsapp import WhatsAppAdapter
+            return WhatsAppAdapter(token=token, bot_id=bot["id"])
+
+        if bot["platform"] == "signal":
+            from cptr.utils.adapters.signal import SignalAdapter
+            return SignalAdapter(token=token)
+
         return None
 
     # ── Message handling ───────────────────────────────────

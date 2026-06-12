@@ -236,8 +236,58 @@ async def verify_token(request: Request, body: TokenVerify):
             info = await dc_verify(body.token)
             return {"ok": True, "info": {"username": info.get("username"), "id": info.get("id")}}
 
+        elif body.platform == "slack":
+            from cptr.utils.adapters.slack import verify_token as slack_verify
+            info = await slack_verify(body.token)
+            return {"ok": True, "info": {"username": info.get("username"), "id": info.get("id")}}
+
+        elif body.platform == "whatsapp":
+            from cptr.utils.adapters.whatsapp import verify_token as wa_verify
+            info = await wa_verify(body.token)
+            return {"ok": True, "info": {"username": info.get("username"), "id": info.get("id")}}
+
+        elif body.platform == "signal":
+            from cptr.utils.adapters.signal import verify_token as sig_verify
+            info = await sig_verify(body.token)
+            return {"ok": True, "info": {"username": info.get("username"), "id": info.get("id")}}
+
         else:
             raise HTTPException(400, f"Unsupported platform: {body.platform}")
 
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ── WhatsApp Webhook ─────────────────────────────────────────
+
+
+webhook_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+
+@webhook_router.get("/whatsapp/{bot_id}")
+async def whatsapp_webhook_verify(bot_id: str, request: Request):
+    """Meta webhook verification challenge (GET)."""
+    mode = request.query_params.get("hub.mode")
+    token = request.query_params.get("hub.verify_token")
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode == "subscribe" and challenge:
+        # Accept any verify_token for now — user sets it in Meta dashboard
+        from starlette.responses import PlainTextResponse
+        return PlainTextResponse(challenge)
+    raise HTTPException(403, "Verification failed")
+
+
+@webhook_router.post("/whatsapp/{bot_id}")
+async def whatsapp_webhook_inbound(bot_id: str, request: Request):
+    """Receive inbound WhatsApp messages via webhook."""
+    from cptr.utils.bridge import bot_manager
+    payload = await request.json()
+
+    adapter = bot_manager._adapters.get(bot_id)
+    if adapter:
+        from cptr.utils.adapters.whatsapp import WhatsAppAdapter
+        if isinstance(adapter, WhatsAppAdapter):
+            await adapter.handle_webhook(payload)
+
+    return {"status": "ok"}

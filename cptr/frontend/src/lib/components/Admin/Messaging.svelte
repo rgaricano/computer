@@ -80,10 +80,10 @@
 	<div>
 		{#each bots as bot}
 			<div class="group flex items-center gap-2 w-full h-7">
-				<!-- Platform badge -->
-				<span class="text-[10px] uppercase tracking-wide w-5 text-center shrink-0
+				<!-- Platform icon -->
+				<span class="shrink-0
 					{bot.is_running ? 'text-gray-400 dark:text-gray-500' : 'text-gray-300 dark:text-gray-700'}">
-					{bot.platform === 'telegram' ? 'TG' : bot.platform === 'discord' ? 'DC' : bot.platform.slice(0, 2).toUpperCase()}
+					<Icon name={bot.platform} size={14} />
 				</span>
 
 				<!-- Name (clickable to edit) -->
