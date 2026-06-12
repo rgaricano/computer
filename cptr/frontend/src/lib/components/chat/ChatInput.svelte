@@ -9,8 +9,11 @@
 	import { all, createLowlight } from 'lowlight';
 
 	import { createFileMention, extractMentionedFiles, type FileMentionAttrs } from './FileMention';
+	import { createSkillMention, extractMentionedSkills, type SkillMentionAttrs } from './SkillMention';
 	import FileSuggestionPopup from './FileSuggestionPopup.svelte';
+	import SkillSuggestionPopup from './SkillSuggestionPopup.svelte';
 	import { searchFiles } from '$lib/apis/files';
+	import { getSkills } from '$lib/apis/skills';
 	import { uploadFile } from '$lib/apis/files';
 	import ModelSelector from '../common/ModelSelector.svelte';
 	import SendButton from './SendButton.svelte';
@@ -265,6 +268,156 @@
 		}
 	}
 
+	// ── $skill mention suggestion ──────────────────────
+	let skillPopupEl: HTMLDivElement | null = null;
+	let skillPopupComponent: Record<string, any> | null = null;
+	let skillActiveClientRectFn: (() => DOMRect | null) | null = null;
+	let skillRepositionRafId: number | null = null;
+	let cachedSkills: SkillMentionAttrs[] | null = null;
+
+	async function fetchSkillSuggestions({ query }: { query: string }): Promise<SkillMentionAttrs[]> {
+		if (!workspace) return [];
+		try {
+			// Cache skills list (small, doesn't change during a session)
+			if (!cachedSkills) {
+				const data = await getSkills(workspace);
+				cachedSkills = data.map((s) => ({
+					id: s.name,
+					label: s.name,
+					description: s.description,
+					source: s.source,
+				}));
+			}
+			if (!query) return cachedSkills;
+			const q = query.toLowerCase();
+			return cachedSkills.filter(
+				(s) => s.label.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
+			);
+		} catch {
+			return [];
+		}
+	}
+
+	function mountSkillPopup(
+		items: SkillMentionAttrs[],
+		selectedIdx: number,
+		onselect: (i: number) => void
+	) {
+		if (skillPopupComponent) {
+			try { unmount(skillPopupComponent); } catch {}
+			skillPopupComponent = null;
+		}
+		if (!skillPopupEl) {
+			skillPopupEl = document.createElement('div');
+			document.body.appendChild(skillPopupEl);
+		}
+		skillPopupComponent = mount(SkillSuggestionPopup, {
+			target: skillPopupEl,
+			props: { items, selectedIndex: selectedIdx, onselect }
+		});
+	}
+
+	function startSkillRepositionLoop() {
+		stopSkillRepositionLoop();
+		function tick() {
+			if (skillActiveClientRectFn) {
+				updateSkillPopupPosition(skillActiveClientRectFn());
+				skillRepositionRafId = requestAnimationFrame(tick);
+			}
+		}
+		skillRepositionRafId = requestAnimationFrame(tick);
+	}
+
+	function stopSkillRepositionLoop() {
+		if (skillRepositionRafId !== null) {
+			cancelAnimationFrame(skillRepositionRafId);
+			skillRepositionRafId = null;
+		}
+	}
+
+	function createSkillSuggestionRenderer() {
+		let selectedIndex = 0;
+		let currentItems: SkillMentionAttrs[] = [];
+		let command: ((attrs: SkillMentionAttrs) => void) | null = null;
+
+		function doSelect(index: number) {
+			const item = currentItems[index];
+			if (item && command) command(item);
+		}
+
+		function remount() {
+			mountSkillPopup(currentItems, selectedIndex, doSelect);
+		}
+
+		return {
+			onStart(props: any) {
+				command = props.command;
+				currentItems = props.items;
+				selectedIndex = 0;
+				skillActiveClientRectFn = props.clientRect ?? null;
+				remount();
+				updateSkillPopupPosition(props.clientRect?.());
+				startSkillRepositionLoop();
+			},
+			onUpdate(props: any) {
+				command = props.command;
+				currentItems = props.items;
+				selectedIndex = 0;
+				skillActiveClientRectFn = props.clientRect ?? null;
+				remount();
+				updateSkillPopupPosition(props.clientRect?.());
+			},
+			onKeyDown({ event }: { event: KeyboardEvent }) {
+				if (event.key === 'ArrowDown') {
+					selectedIndex = (selectedIndex + 1) % Math.max(currentItems.length, 1);
+					remount();
+					return true;
+				}
+				if (event.key === 'ArrowUp') {
+					selectedIndex = (selectedIndex - 1 + currentItems.length) % Math.max(currentItems.length, 1);
+					remount();
+					return true;
+				}
+				if (event.key === 'Enter') {
+					const item = currentItems[selectedIndex];
+					if (item && command) command(item);
+					return true;
+				}
+				if (event.key === 'Escape') {
+					destroySkillPopup();
+					return true;
+				}
+				return false;
+			},
+			onExit() {
+				destroySkillPopup();
+			}
+		};
+	}
+
+	function updateSkillPopupPosition(rect: DOMRect | null) {
+		if (!skillPopupEl || !rect) return;
+		const child = skillPopupEl.firstElementChild as HTMLElement | null;
+		if (!child) return;
+		const popupHeight = child.offsetHeight || 200;
+		child.style.position = 'fixed';
+		child.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 340))}px`;
+		child.style.top = `${rect.top - popupHeight - 8}px`;
+	}
+
+	function destroySkillPopup() {
+		stopSkillRepositionLoop();
+		skillActiveClientRectFn = null;
+		if (skillPopupComponent) {
+			try { unmount(skillPopupComponent); } catch {}
+			skillPopupComponent = null;
+		}
+		if (skillPopupEl) {
+			skillPopupEl.remove();
+			skillPopupEl = null;
+		}
+	}
+
 	// ── Editor lifecycle ────────────────────────────
 	onMount(() => {
 		if (!editorEl) return;
@@ -272,6 +425,11 @@
 		const fileMention = createFileMention({
 			items: fetchSuggestions,
 			render: createSuggestionRenderer
+		});
+
+		const skillMention = createSkillMention({
+			items: fetchSkillSuggestions,
+			render: createSkillSuggestionRenderer
 		});
 
 		editor = new Editor({
@@ -284,7 +442,8 @@
 				Markdown,
 				Placeholder.configure({ placeholder }),
 				CodeBlockLowlight.configure({ lowlight }),
-				fileMention
+				fileMention,
+				skillMention
 			],
 			content: inputText || '',
 			contentType: inputText ? 'markdown' : undefined,
@@ -297,7 +456,7 @@
 				handleKeyDown: (view, event) => {
 					if (event.key === 'Enter' && !event.shiftKey) {
 						// Don't send while suggestion popup is open — let it confirm selection
-						if (popupComponent) return false;
+						if (popupComponent || skillPopupComponent) return false;
 						const { state } = view;
 						const head = state.selection.$head;
 
@@ -326,6 +485,7 @@
 
 	onDestroy(() => {
 		destroyPopup();
+		destroySkillPopup();
 		editor?.destroy();
 		editor = null;
 	});
@@ -357,6 +517,11 @@
 
 	export function clearUploads() {
 		attachedUploads = [];
+	}
+
+	export function getSkillIds(): string[] {
+		if (!editor) return [];
+		return extractMentionedSkills(editor.getJSON());
 	}
 
 	// Allow sending during streaming (message will be enqueued server-side)

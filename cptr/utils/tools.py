@@ -910,6 +910,34 @@ async def delete_automation(
         return json.dumps({"error": str(e)})
 
 
+# ── Skill tools ─────────────────────────────────────────────
+
+# Track activated skills per session (cleared on import)
+_activated_skills: set[str] = set()
+
+
+async def view_skill(
+    skill_name: str,
+    *,
+    workspace: str,
+) -> str:
+    """Load the full instructions and resource listing for an available skill.
+    :param skill_name: The name of the skill to load (from the <available_skills> catalog).
+    """
+    from cptr.utils.skills import load_skill, format_skill_content
+
+    # Deduplication: if already activated, return short notice
+    if skill_name in _activated_skills:
+        return f"Skill '{skill_name}' is already loaded in this session. Refer to the existing <skill_content> above."
+
+    skill = load_skill(workspace, skill_name)
+    if not skill:
+        return f"Error: skill '{skill_name}' not found. Check <available_skills> for valid names."
+
+    _activated_skills.add(skill_name)
+    return format_skill_content(skill)
+
+
 # ── Registry ────────────────────────────────────────────────
 
 TOOLS: dict[str, dict] = {
@@ -921,6 +949,7 @@ TOOLS: dict[str, dict] = {
     "web_search": {"fn": web_search, "auto": True},
     "read_url": {"fn": read_url, "auto": True},
     "list_automations": {"fn": list_automations, "auto": True},
+    "view_skill": {"fn": view_skill, "auto": True},
     # Write / mutate (require approval unless auto_approve_all)
     "create_file": {"fn": create_file, "auto": False},
     "edit_file": {"fn": edit_file, "auto": False},

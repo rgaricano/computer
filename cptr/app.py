@@ -15,6 +15,7 @@ from cptr.routers import (
     git_router,
     proxy_router,
     search_router,
+    skills_router,
     state_router,
     terminal_router,
     workspace_router,
@@ -192,6 +193,7 @@ app.include_router(files_router)
 app.include_router(git_router)
 app.include_router(proxy_router)
 app.include_router(search_router)
+app.include_router(skills_router)
 app.include_router(state_router)
 app.include_router(terminal_router)
 app.include_router(workspace_router)

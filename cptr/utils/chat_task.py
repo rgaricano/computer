@@ -13,6 +13,7 @@ from pathlib import Path
 
 from cptr.env import CHAT_MAX_ITERATIONS, CHAT_TOOL_MAX_CHARS
 from cptr.utils.context import should_compact
+from cptr.utils.skills import discover_skills, load_skill, build_catalog_xml, format_skill_content
 from cptr.utils.summarize import summarize_messages
 from cptr.models import Chat, ChatMessage, Config
 from cptr.socket.main import emit_to_user
@@ -320,6 +321,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "For complex tasks, create an implementation plan first using "
     "create_artifact, then wait for approval before coding."
     "\n\n{{INSTRUCTIONS}}"
+    "\n\n{{SKILLS}}"
     "\n\nWorkspace: {{WORKSPACE_NAME}}"
     "\nFiles:\n{{FILE_TREE}}"
 )
@@ -361,11 +363,16 @@ def _build_template_variables(workspace: str, model: str = "") -> dict[str, str]
     else:
         instructions_block = ""
 
+    # Build skills catalog
+    skills = discover_skills(workspace)
+    skills_block = build_catalog_xml(skills)
+
     return {
         "WORKSPACE_NAME": ws_path.name if ws_path.is_dir() else "",
         "WORKSPACE_PATH": str(ws_path),
         "FILE_TREE": _get_file_tree(workspace),
         "INSTRUCTIONS": instructions_block,
+        "SKILLS": skills_block,
         "OS": platform.system().replace("Darwin", "macOS"),
         "DATE": date.today().isoformat(),
         "MODEL": model,
@@ -793,9 +800,33 @@ async def run_chat_task(
             messages.append({"role": "user", "content": regeneration_prompt})
         tools = get_tool_list()
 
-        # Load chat params for approval mode
+        # Remove view_skill tool if no skills are available
+        skills = discover_skills(workspace)
+        if not skills:
+            tools = [t for t in tools if t["name"] != "view_skill"]
+
+        # Parse $skill-name mentions from the user message to auto-activate skills
         chat_obj = await Chat.get_by_id(chat_id)
         chat_params = (chat_obj.meta or {}).get("params", {}) if chat_obj else {}
+        attached_skill_ids: list[str] = []
+        if skills and messages:
+            # Find the last user message
+            last_user = next((m for m in reversed(messages) if m["role"] == "user"), None)
+            if last_user:
+                import re as _re
+                mentioned = _re.findall(r'\$([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)', last_user["content"])
+                skill_names = {s.name for s in skills}
+                attached_skill_ids = [m for m in mentioned if m in skill_names]
+        if attached_skill_ids:
+            from cptr.utils.tools import _activated_skills
+            skill_blocks = []
+            for sid in attached_skill_ids:
+                skill = load_skill(workspace, sid)
+                if skill:
+                    skill_blocks.append(format_skill_content(skill))
+                    _activated_skills.add(sid)  # mark as activated for dedup
+            if skill_blocks:
+                system += "\n\n" + "\n\n".join(skill_blocks)
 
         # Plan mode: strip write tools, inject prompt as user message (not system, to preserve cache)
         plan_mode = chat_params.get("plan_mode", False)
@@ -853,6 +884,15 @@ async def run_chat_task(
                 # Append summary to system prompt (works for all providers)
                 system = await _load_system_prompt(workspace, model)
                 system += f"\n\n[CONVERSATION SUMMARY]\n{summary}"
+                # Re-inject attached skills after compaction (protect from pruning)
+                if attached_skill_ids:
+                    skill_blocks = []
+                    for sid in attached_skill_ids:
+                        skill = load_skill(workspace, sid)
+                        if skill:
+                            skill_blocks.append(format_skill_content(skill))
+                    if skill_blocks:
+                        system += "\n\n" + "\n\n".join(skill_blocks)
                 messages = keep_zone
                 last_usage = None  # reset after compaction
                 new_messages_since = 0
