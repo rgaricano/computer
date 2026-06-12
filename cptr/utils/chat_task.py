@@ -58,8 +58,14 @@ def start_task(
     """Launch the agentic loop as a background asyncio.Task."""
     task = asyncio.create_task(
         run_chat_task(
-            message_id, chat_id, user_id, connection, workspace, model,
-            regeneration_prompt, output_queue,
+            message_id,
+            chat_id,
+            user_id,
+            connection,
+            workspace,
+            model,
+            regeneration_prompt,
+            output_queue,
         )
     )
     _tasks[message_id] = task
@@ -336,6 +342,7 @@ def _render_template(template: str, variables: dict[str, str]) -> str:
     - Unrecognized {{...}} tokens are left as-is.
     - Cleans up excess blank lines left by empty variable substitutions.
     """
+
     def _replace(match: re.Match) -> str:
         key = match.group(1)
         if key in variables:
@@ -406,20 +413,14 @@ async def _load_system_prompt(workspace: str, model: str = "") -> str:
             # Per-model prompt
             if model:
                 model_prompt = (
-                    chat_models_config
-                    .get(model, {})
-                    .get("params", {})
-                    .get("system_prompt")
+                    chat_models_config.get(model, {}).get("params", {}).get("system_prompt")
                 )
                 if model_prompt:
                     template = model_prompt
             # Global prompt
             if template is None:
                 global_prompt = (
-                    chat_models_config
-                    .get("*", {})
-                    .get("params", {})
-                    .get("system_prompt")
+                    chat_models_config.get("*", {}).get("params", {}).get("system_prompt")
                 )
                 if global_prompt:
                     template = global_prompt
@@ -498,9 +499,7 @@ async def generate_chat_title(
 # ── Message history ─────────────────────────────────────────
 
 
-async def _load_message_history(
-    chat_id: str, message_id: str
-) -> tuple[list[dict], str | None]:
+async def _load_message_history(chat_id: str, message_id: str) -> tuple[list[dict], str | None]:
     """Load the ancestor chain from message_id to root as LLM messages.
 
     Walks up via parent_id so only the active branch is included.
@@ -548,23 +547,23 @@ async def _load_message_history(
         if m.role == "user":
             attached_files = (m.meta or {}).get("files", [])
             images = [
-                f for f in attached_files 
-                if isinstance(f, dict) and (f.get("type") == "image" or (f.get("content_type") or "").startswith("image/"))
+                f
+                for f in attached_files
+                if isinstance(f, dict)
+                and (f.get("type") == "image" or (f.get("content_type") or "").startswith("image/"))
             ]
-            non_images = [
-                f for f in attached_files 
-                if isinstance(f, dict) and f not in images
-            ]
-            
+            non_images = [f for f in attached_files if isinstance(f, dict) and f not in images]
+
             if images or non_images:
                 from cptr.utils.storage import get_storage
                 import base64
-                
+
                 text_content = entry["content"]
-                
+
                 # Append file:// references so the AI can read them with read_file
                 if non_images:
                     from cptr.utils.storage import UPLOADS_DIR
+
                     file_refs = []
                     for f in non_images:
                         file_id = f.get("id")
@@ -577,7 +576,7 @@ async def _load_message_history(
                         text_content += "\n\nAttached files:\n" + "\n".join(file_refs)
 
                 content_blocks = [{"type": "text", "text": text_content}] if text_content else []
-                
+
                 for img in images:
                     file_id = img.get("id")
                     if not file_id:
@@ -586,12 +585,10 @@ async def _load_message_history(
                     if data:
                         b64_str = base64.b64encode(data).decode("utf-8")
                         ctype = img.get("content_type") or "image/png"
-                        content_blocks.append({
-                            "type": "image",
-                            "media_type": ctype,
-                            "base64": b64_str
-                        })
-                
+                        content_blocks.append(
+                            {"type": "image", "media_type": ctype, "base64": b64_str}
+                        )
+
                 if len(content_blocks) > (1 if text_content else 0):
                     entry["content"] = content_blocks
                 elif text_content != entry["content"]:
@@ -730,7 +727,6 @@ def _find_safe_split(messages: list[dict], target_keep: int) -> int:
     return min(split, n - 2)  # always keep at least 2
 
 
-
 # ── Connection resolution ───────────────────────────────────
 
 
@@ -754,7 +750,9 @@ def build_artifact_item(tool_name: str, arguments: dict, result: str) -> dict | 
     return {
         "type": "artifact",
         "artifact_type": artifact_type,
-        "title": meta.get("title") or arguments.get("title") or artifact_type.replace("_", " ").title(),
+        "title": meta.get("title")
+        or arguments.get("title")
+        or artifact_type.replace("_", " ").title(),
         "content": arguments.get("content", ""),
         "path": meta.get("path") or arguments.get("path", ""),
     }
@@ -789,6 +787,8 @@ async def run_chat_task(
         if output_queue is not None:
             if "delta" in data:
                 await output_queue.put({"type": "delta", "content": data["delta"]})
+            elif "output" in data:
+                await output_queue.put({"type": "output", "item": data["output"]})
             elif data.get("done"):
                 if "error" in data:
                     await output_queue.put({"type": "error", "message": data["error"]})
@@ -870,11 +870,15 @@ async def run_chat_task(
             last_user = next((m for m in reversed(messages) if m["role"] == "user"), None)
             if last_user:
                 import re as _re
-                mentioned = _re.findall(r'\$([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)', last_user["content"])
+
+                mentioned = _re.findall(
+                    r"\$([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)", last_user["content"]
+                )
                 skill_names = {s.name for s in skills}
                 attached_skill_ids = [m for m in mentioned if m in skill_names]
         if attached_skill_ids:
             from cptr.utils.tools import _activated_skills
+
             skill_blocks = []
             for sid in attached_skill_ids:
                 skill = load_skill(workspace, sid)
@@ -891,7 +895,9 @@ async def run_chat_task(
             # Inject create_artifact (only available in plan mode)
             tools.append(_fn_to_schema("create_artifact", create_artifact))
             messages.append({"role": "user", "content": PLAN_MODE_PROMPT})
-            logger.info("[task %s] plan mode active, %d tools available", message_id[:8], len(tools))
+            logger.info(
+                "[task %s] plan mode active, %d tools available", message_id[:8], len(tools)
+            )
 
         # Tool approval mode: 'ask' | 'auto' | 'full'
         #   ask  = require approval for ALL tools (including reads)
@@ -928,8 +934,12 @@ async def run_chat_task(
 
                 api_type = connection.get("api_type", "chat_completions")
                 summary = await summarize_messages(
-                    drop_zone, loaded_summary,
-                    provider, base_url, api_key, model,
+                    drop_zone,
+                    loaded_summary,
+                    provider,
+                    base_url,
+                    api_key,
+                    model,
                     api_type=api_type,
                 )
 
@@ -955,7 +965,10 @@ async def run_chat_task(
 
                 logger.info(
                     "[task %s] compacted: dropped %d msgs, kept %d, summary=%d chars",
-                    message_id[:8], len(drop_zone), len(keep_zone), len(summary),
+                    message_id[:8],
+                    len(drop_zone),
+                    len(keep_zone),
+                    len(summary),
                 )
 
             # Anthropic supports images natively in tool_result content blocks.
@@ -977,13 +990,18 @@ async def run_chat_task(
                     else:
                         api_messages.append(m)
                 if image_blocks:
-                    api_messages.append({
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": "Here are the images from the tool results above."},
-                            *image_blocks,
-                        ],
-                    })
+                    api_messages.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Here are the images from the tool results above.",
+                                },
+                                *image_blocks,
+                            ],
+                        }
+                    )
 
             form_data = ChatCompletionForm(
                 model=model,
@@ -993,11 +1011,17 @@ async def run_chat_task(
             )
 
             if provider == "anthropic":
-                stream = stream_anthropic(form_data, base_url, api_key, request_params=request_params)
+                stream = stream_anthropic(
+                    form_data, base_url, api_key, request_params=request_params
+                )
             elif connection.get("api_type") == "responses":
-                stream = stream_openai_responses(form_data, base_url, api_key, request_params=request_params)
+                stream = stream_openai_responses(
+                    form_data, base_url, api_key, request_params=request_params
+                )
             else:
-                stream = stream_openai_completions(form_data, base_url, api_key, request_params=request_params)
+                stream = stream_openai_completions(
+                    form_data, base_url, api_key, request_params=request_params
+                )
 
             restart = False
 
@@ -1037,9 +1061,20 @@ async def run_chat_task(
                         _sync_state()
 
                         if name == "create_artifact":
-                            result = await create_artifact(**event["arguments"], workspace=workspace)
+                            result = await create_artifact(
+                                **event["arguments"], workspace=workspace
+                            )
                         else:
-                            result = await execute_tool(name, event["arguments"], {"workspace": workspace, "user_id": user_id, "model_id": model, "chat_id": chat_id})
+                            result = await execute_tool(
+                                name,
+                                event["arguments"],
+                                {
+                                    "workspace": workspace,
+                                    "user_id": user_id,
+                                    "model_id": model,
+                                    "chat_id": chat_id,
+                                },
+                            )
 
                         # Update status to completed
                         item["status"] = "completed"
@@ -1061,9 +1096,7 @@ async def run_chat_task(
                             _sync_state()
 
                         # Persist intermediate state so content survives crashes/errors
-                        await ChatMessage.update(
-                            message_id, content=content, output=output_items
-                        )
+                        await ChatMessage.update(message_id, content=content, output=output_items)
 
                         # Append to messages for next iteration
                         _append_tool_to_messages(messages, event, result, provider)
@@ -1092,7 +1125,9 @@ async def run_chat_task(
                     _flush_text()
                     usage = {k: v for k, v in event.items() if k != "type"}
                     if "total_tokens" not in usage:
-                        usage["total_tokens"] = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                        usage["total_tokens"] = usage.get("input_tokens", 0) + usage.get(
+                            "output_tokens", 0
+                        )
                     last_usage = usage
                     new_messages_since = 0
                     logger.info(
@@ -1159,11 +1194,12 @@ async def run_chat_task(
         _flush_text()
         error_msg = str(e)
         # Try to extract API error body for more detail
-        if hasattr(e, 'response'):
+        if hasattr(e, "response"):
             try:
                 body = e.response.text or ""
                 if body:
                     import json as _json
+
                     err_data = _json.loads(body)
                     api_msg = err_data.get("error", {}).get("message", "")
                     if api_msg:
@@ -1230,9 +1266,7 @@ async def run_chat_task(
 
                 await post_webhook(webhook_url, title, preview)
         except Exception:
-            logger.debug(
-                "[webhook] Error sending webhook for chat %s", chat_id[:8], exc_info=True
-            )
+            logger.debug("[webhook] Error sending webhook for chat %s", chat_id[:8], exc_info=True)
         # Process any queued follow-up messages
         try:
             await _process_queue(chat_id, user_id, workspace)

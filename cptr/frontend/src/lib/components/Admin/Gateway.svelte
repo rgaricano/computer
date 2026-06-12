@@ -2,6 +2,7 @@
 	import { toast } from 'svelte-sonner';
 	import { onMount } from 'svelte';
 	import { fetchJSON, jsonBody } from '$lib/apis';
+	import { getModelConfig, updateConfig } from '$lib/apis/admin';
 	import { t } from '$lib/i18n';
 	import Icon from '$lib/components/Icon.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
@@ -12,21 +13,55 @@
 		created_at: number;
 	}
 
+	interface GatewayModel {
+		id: string;
+		name: string;
+		provider: string;
+	}
+
 	let keys = $state<ApiKey[]>([]);
+	let models = $state<GatewayModel[]>([]);
 	let loading = $state(true);
 	let creating = $state(false);
+	let saving = $state(false);
 	let newKeyName = $state('');
+	let selectedModel = $state('');
 
 	/** Newly created key, shown once, then hidden */
 	let revealedKey = $state('');
+	const openWebUIHeaders = `{
+  "X-OpenWebUI-Chat-Id": "{{CHAT_ID}}"
+}`;
 
-	async function loadKeys() {
+	async function loadSettings() {
 		try {
-			keys = await fetchJSON<ApiKey[]>('/v1/keys');
+			const [loadedKeys, modelConfig, gatewayConfig] = await Promise.all([
+				fetchJSON<ApiKey[]>('/v1/keys'),
+				getModelConfig(),
+				fetchJSON<{ config: Record<string, unknown> }>('/api/admin/config/gateway')
+			]);
+			keys = loadedKeys;
+			models = modelConfig.models;
+			selectedModel =
+				typeof gatewayConfig.config['gateway.model'] === 'string'
+					? gatewayConfig.config['gateway.model']
+					: '';
 		} catch {
 			toast.error($t('admin.gateway.loadError'));
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function save() {
+		saving = true;
+		try {
+			await updateConfig({ 'gateway.model': selectedModel });
+			toast.success($t('settings.saved'));
+		} catch {
+			toast.error($t('admin.gateway.modelSaveError'));
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -42,7 +77,8 @@
 			);
 			revealedKey = result.key;
 			newKeyName = '';
-			await loadKeys();
+			const loadedKeys = await fetchJSON<ApiKey[]>('/v1/keys');
+			keys = loadedKeys;
 			toast.success($t('admin.gateway.keyCreated'));
 		} catch {
 			toast.error($t('admin.gateway.createError'));
@@ -67,6 +103,11 @@
 		toast.success($t('admin.gateway.copied'));
 	}
 
+	function copyHeaders() {
+		navigator.clipboard.writeText(openWebUIHeaders);
+		toast.success($t('admin.gateway.copied'));
+	}
+
 	function formatDate(ts: number) {
 		return new Date(ts * 1000).toLocaleDateString(undefined, {
 			month: 'short',
@@ -75,7 +116,7 @@
 		});
 	}
 
-	onMount(loadKeys);
+	onMount(loadSettings);
 </script>
 
 <div class="flex flex-col min-h-full">
@@ -91,6 +132,27 @@
 			<Spinner size={16} />
 		</div>
 	{:else}
+		<div class="mb-5 border-b border-gray-100 dark:border-white/5 pb-4">
+			<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2">
+				{$t('admin.gateway.model')}
+			</h3>
+			<div class="flex items-center gap-2">
+				<select
+					class="flex-1 h-7 px-2 rounded-lg text-xs bg-gray-100 dark:bg-white/6 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-white/8 outline-none focus:border-gray-400 dark:focus:border-white/20 transition-colors"
+					bind:value={selectedModel}
+					disabled={saving}
+				>
+					<option value="">{$t('admin.gateway.modelFallback')}</option>
+					{#each models as model (model.id)}
+						<option value={model.id}>{model.id}</option>
+					{/each}
+				</select>
+			</div>
+			<p class="text-[11px] text-gray-400 dark:text-gray-600 mt-1.5">
+				{$t('admin.gateway.modelDescription')}
+			</p>
+		</div>
+
 		{#if revealedKey}
 			<div class="mb-5 border-b border-gray-100 dark:border-white/5 pb-4">
 				<div class="flex items-center justify-between gap-2 mb-2">
@@ -189,15 +251,32 @@
 					<span class="text-gray-400 dark:text-gray-600">API Key:</span>
 					<span class="text-gray-700 dark:text-gray-300">sk-cptr-...</span>
 				</div>
-				<div>
-					<span class="text-gray-400 dark:text-gray-600">Header:</span>
-					<span class="text-gray-700 dark:text-gray-300">X-OpenWebUI-Chat-Id: {'{{CHAT_ID}}'}</span>
-				</div>
-				<div>
-					<span class="text-gray-400 dark:text-gray-600">Also accepts:</span>
-					<span class="text-gray-700 dark:text-gray-300">X-Chat-Id</span>
+				<div class="pt-1">
+					<div class="flex items-center justify-between gap-2 mb-1">
+						<span class="text-gray-400 dark:text-gray-600">Headers:</span>
+						<button
+							class="shrink-0 text-[11px] font-sans text-gray-500 hover:text-gray-900 dark:text-gray-500 dark:hover:text-white transition-colors"
+							onclick={copyHeaders}
+						>
+							Copy
+						</button>
+					</div>
+					<button
+						class="w-full text-left whitespace-pre-wrap rounded-lg border border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-white/4 px-2.5 py-2 text-[11px] font-mono text-gray-700 dark:text-gray-300 transition-colors hover:border-gray-200 dark:hover:border-white/10"
+						onclick={copyHeaders}
+					>
+						{openWebUIHeaders}
+					</button>
 				</div>
 			</div>
+		</div>
+
+		<div class="mt-auto pt-6 flex justify-end">
+			<button
+				class="text-[13px] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors duration-100 disabled:opacity-50"
+				onclick={() => save()}
+				disabled={saving}>{$t('settings.save')}</button
+			>
 		</div>
 	{/if}
 </div>

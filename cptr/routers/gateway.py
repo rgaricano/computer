@@ -59,6 +59,14 @@ def _hash_key(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _format_tool_call(item: dict) -> str | None:
+    """Render a tool call as compact markdown for OpenAI-compatible clients."""
+    if item.get("type") != "function_call" or item.get("status") != "in_progress":
+        return None
+
+    return f"\n\n`{item.get('name', 'tool')}`\n\n"
+
+
 async def _validate_bearer(request: Request) -> str:
     """Validate Bearer token from Authorization header.  Returns user_id."""
     auth = request.headers.get("Authorization", "")
@@ -297,6 +305,11 @@ async def _sse_generator(
             if content:
                 yield _chunk({"content": content})
 
+        elif event_type == "output":
+            content = _format_tool_call(event.get("item") or {})
+            if content:
+                yield _chunk({"content": content})
+
         elif event_type == "done":
             finish = event.get("finish_reason", "stop")
             yield _chunk({}, finish)
@@ -311,8 +324,7 @@ async def _sse_generator(
             yield "data: [DONE]\n\n"
             return
 
-        # Other event types (tool calls, etc.) are silently consumed,
-        # they're persisted in cptr's DB and visible in its sidebar.
+        # Other output types are persisted in cptr's DB and visible in its sidebar.
 
 
 async def _collect_response(queue: asyncio.Queue) -> str:
@@ -327,6 +339,10 @@ async def _collect_response(queue: asyncio.Queue) -> str:
             break
         if event.get("type") == "delta":
             parts.append(event.get("content", ""))
+        elif event.get("type") == "output":
+            content = _format_tool_call(event.get("item") or {})
+            if content:
+                parts.append(content)
         elif event.get("type") in ("done", "error"):
             if event.get("type") == "error":
                 parts.append(f"\n\n> **Error:** {event.get('message', '')}")
@@ -374,12 +390,24 @@ async def _resolve_model_connection(workspace: str) -> tuple[dict, str, str]:
     """Find a model connection to use for the agentic loop.
 
     Priority:
-      1. Workspace-specific model override (.cptr/model)
-      2. First enabled connection's first model
+      1. Gateway model selected in Settings > Gateway
+      2. Workspace-specific model override (.cptr/model)
+      3. First enabled connection's first model
 
     Returns (connection_dict, bare_model, full_model_id).
     """
     from cptr.routers.chat import _resolve_connection
+
+    gateway_model = await Config.get("gateway.model")
+    if isinstance(gateway_model, str) and gateway_model.strip():
+        try:
+            connection, bare = await _resolve_connection(gateway_model.strip())
+            return connection, bare, gateway_model.strip()
+        except Exception:
+            logger.warning(
+                "[openai-compat] Gateway model '%s' not found, falling back",
+                gateway_model,
+            )
 
     # Check for workspace-specific model override
     model_file = Path(workspace) / ".cptr" / "model"
