@@ -8,6 +8,7 @@
 	import Users from './Admin/Users.svelte';
 	import Connections from './Admin/Connections.svelte';
 	import Models from './Admin/Models.svelte';
+	import Messaging from './Admin/Messaging.svelte';
 	import AdminSettings from './Admin/Settings.svelte';
 	import { session } from '$lib/session';
 	import { t } from '$lib/i18n';
@@ -20,6 +21,7 @@
 		| 'users'
 		| 'connections'
 		| 'models'
+		| 'messaging'
 		| 'admin_settings';
 
 	interface Props {
@@ -44,6 +46,7 @@
 		{ id: 'users', label: $t('admin.users'), icon: 'user' },
 		{ id: 'connections', label: $t('admin.connections'), icon: 'plug' },
 		{ id: 'models', label: $t('admin.models'), icon: 'cube' },
+		{ id: 'messaging', label: $t('admin.messaging'), icon: 'chat-bubble' },
 		{ id: 'admin_settings', label: $t('settings.configuration'), icon: 'shield' }
 	]);
 </script>
@@ -113,6 +116,8 @@
 			<Connections />
 		{:else if activeTab === 'models'}
 			<Models />
+		{:else if activeTab === 'messaging'}
+			<Messaging />
 		{:else if activeTab === 'admin_settings'}
 			<AdminSettings />
 		{/if}

@@ -408,5 +408,29 @@
 	"automationModal.createBtn": "Create",
 	"automationModal.failedToSave": "Failed to save automation",
 
-	"connections.failedToUpdate": "Failed to update connection"
+	"connections.failedToUpdate": "Failed to update connection",
+
+	"admin.messaging": "Messaging",
+
+	"messaging.loadError": "Failed to load bots",
+	"messaging.fillRequired": "All fields are required",
+	"messaging.created": "Bot created",
+	"messaging.createError": "Failed to create bot",
+	"messaging.started": "Bot started",
+	"messaging.stopped": "Bot stopped",
+	"messaging.toggleError": "Failed to toggle bot",
+	"messaging.deleted": "Bot deleted",
+	"messaging.deleteError": "Failed to delete bot",
+	"messaging.empty": "No messaging bots configured",
+	"messaging.addFirst": "+ Add your first bot",
+	"messaging.addBot": "Add Bot",
+	"messaging.start": "Start",
+	"messaging.stop": "Stop",
+	"messaging.verify": "Verify",
+	"messaging.createBot": "Create Bot",
+	"messaging.tokenPlaceholder": "Bot token...",
+	"messaging.namePlaceholder": "Bot name...",
+	"messaging.workspacePlaceholder": "Workspace path (e.g. /Users/you/project)",
+	"messaging.modelPlaceholder": "Model ID (e.g. openrouter/claude-sonnet-4-20250514)",
+	"messaging.sendersPlaceholder": "Allowed user IDs (comma-separated, leave empty for all)"
 }

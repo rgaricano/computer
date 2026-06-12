@@ -3,6 +3,7 @@
 from cptr.routers.admin import router as admin_router
 from cptr.routers.auth import router as auth_router
 from cptr.routers.automations import router as automations_router
+from cptr.routers.bridge import router as bridge_router
 from cptr.routers.chat import router as chat_router
 from cptr.routers.events import router as events_router
 from cptr.routers.files import router as files_router
@@ -18,6 +19,7 @@ __all__ = [
     "admin_router",
     "auth_router",
     "automations_router",
+    "bridge_router",
     "chat_router",
     "events_router",
     "files_router",
@@ -29,3 +31,4 @@ __all__ = [
     "terminal_router",
     "workspace_router",
 ]
+
