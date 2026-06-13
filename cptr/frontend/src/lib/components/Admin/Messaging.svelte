@@ -17,7 +17,7 @@
 		try {
 			bots = await listBots();
 		} catch {
-			toast.error('Failed to load bots');
+			toast.error($t('messaging.failedToLoad'));
 		} finally {
 			loading = false;
 		}
@@ -45,7 +45,7 @@
 		} catch {
 			bot.is_running = wasRunning;
 			bots = [...bots];
-			toast.error('Failed to toggle bot');
+			toast.error($t('messaging.failedToToggle'));
 		}
 	}
 
@@ -55,7 +55,7 @@
 			await deleteBot(bot.id);
 			await load();
 		} catch {
-			toast.error('Failed to delete bot');
+			toast.error($t('messaging.failedToDelete'));
 		}
 	}
 
@@ -131,7 +131,7 @@
 		{/each}
 
 		{#if bots.length === 0}
-			<p class="text-[13px] text-gray-400 dark:text-gray-600 py-4">No messaging bots configured.</p>
+			<p class="text-[13px] text-gray-400 dark:text-gray-600 py-4">{$t('messaging.noBots')}</p>
 		{/if}
 	</div>
 {/if}

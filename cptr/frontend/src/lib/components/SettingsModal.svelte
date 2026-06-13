@@ -4,7 +4,6 @@
 	import General from './Settings/General.svelte';
 	import Account from './Settings/Account.svelte';
 	import Keyboard from './Settings/Keyboard.svelte';
-	import Browser from './Settings/Browser.svelte';
 	import About from './Settings/About.svelte';
 	import Users from './Admin/Users.svelte';
 	import Connections from './Admin/Connections.svelte';
@@ -12,14 +11,15 @@
 	import Messaging from './Admin/Messaging.svelte';
 	import Gateway from './Admin/Gateway.svelte';
 	import AudioSettings from './Admin/AudioSettings.svelte';
-	import AdminSettings from './Admin/Settings.svelte';
+	import AdminWeb from './Admin/Web.svelte';
+	import ToolServers from './Admin/ToolServers.svelte';
+	import Subagents from './Admin/Subagents.svelte';
 	import { session } from '$lib/session';
 	import { t } from '$lib/i18n';
 
 	type Tab =
 		| 'general'
 		| 'keyboard'
-		| 'browser'
 		| 'account'
 		| 'about'
 		| 'users'
@@ -28,7 +28,9 @@
 		| 'messaging'
 		| 'gateway'
 		| 'audio'
-		| 'admin_settings';
+		| 'web'
+		| 'toolservers'
+		| 'subagents';
 
 	interface Props {
 		onclose: () => void;
@@ -54,9 +56,10 @@
 		{ id: 'models', label: $t('admin.models'), icon: 'cube' },
 		{ id: 'messaging', label: $t('admin.messaging'), icon: 'chat-bubble' },
 		{ id: 'gateway', label: $t('admin.gateway.tab'), icon: 'gateway' },
-		{ id: 'audio', label: 'Audio', icon: 'microphone' },
-		{ id: 'browser', label: 'Browser', icon: 'browser' },
-		{ id: 'admin_settings', label: $t('settings.configuration'), icon: 'shield' }
+		{ id: 'audio', label: $t('admin.audio.title'), icon: 'microphone' },
+		{ id: 'web', label: $t('admin.web'), icon: 'globe' },
+		{ id: 'toolservers', label: $t('admin.toolServers'), icon: 'plug' },
+		{ id: 'subagents', label: $t('admin.subagents'), icon: 'user' }
 	]);
 </script>
 
@@ -117,8 +120,6 @@
 			<General />
 		{:else if activeTab === 'keyboard'}
 			<Keyboard />
-		{:else if activeTab === 'browser'}
-			<Browser />
 		{:else if activeTab === 'account'}
 			<Account />
 		{:else if activeTab === 'about'}
@@ -135,8 +136,12 @@
 			<Gateway />
 		{:else if activeTab === 'audio'}
 			<AudioSettings />
-		{:else if activeTab === 'admin_settings'}
-			<AdminSettings />
+		{:else if activeTab === 'web'}
+			<AdminWeb />
+		{:else if activeTab === 'toolservers'}
+			<ToolServers />
+		{:else if activeTab === 'subagents'}
+			<Subagents />
 		{/if}
 	</div>
 </Modal>

@@ -343,7 +343,7 @@
 				}}
 			>
 				<Icon name="clock" size={14} />
-				<span class="flex-1 text-left overflow-hidden text-ellipsis whitespace-nowrap">Automations</span>
+				<span class="flex-1 text-left overflow-hidden text-ellipsis whitespace-nowrap">{$t('automations.title')}</span>
 			</a>
 		</div>
 		{/if}
@@ -388,7 +388,7 @@
 										e.preventDefault();
 										toggleWorkspaceExpand(ws.path);
 									}}
-									aria-label={isExpanded ? 'Collapse' : 'Expand'}
+									aria-label={isExpanded ? $t('sidebar.collapse') : $t('sidebar.addWorkspace')}
 								>
 									<span class="ws-icon-folder"><Icon name="folder" size={14} /></span>
 									<span class="ws-icon-chevron" style="transform: rotate({isExpanded ? '90deg' : '0deg'})">
@@ -417,8 +417,8 @@
 								role="button"
 								tabindex="-1"
 								onclick={() => handleNewChat(ws.path)}
-								aria-label="New Chat"
-								use:tooltip={'New Chat'}
+								aria-label={$t('bar.newChat')}
+								use:tooltip={$t('bar.newChat')}
 							>
 								<Icon name="pencil" size={11} />
 							</span>

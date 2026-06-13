@@ -54,16 +54,16 @@
 	);
 
 	let selectedWsName = $derived(
-		$workspaceList.find((w) => w.path === workspace)?.name || workspace.split('/').pop() || 'Select workspace'
+		$workspaceList.find((w) => w.path === workspace)?.name || workspace.split('/').pop() || $t('automationModal.selectWorkspace')
 	);
 
-	const platformHints: Record<string, string> = {
-		telegram: 'Create a bot via @BotFather',
-		discord: 'Create a bot in the Developer Portal',
-		slack: 'Bot Token | App Token (pipe-separated)',
-		whatsapp: 'Access Token | Phone Number ID (pipe-separated)',
-		signal: 'signal-cli URL | Phone Number (pipe-separated)'
-	};
+	const platformHints: Record<string, string> = $derived({
+		telegram: $t('messaging.hint.telegram'),
+		discord: $t('messaging.hint.discord'),
+		slack: $t('messaging.hint.slack'),
+		whatsapp: $t('messaging.hint.whatsapp'),
+		signal: $t('messaging.hint.signal')
+	});
 
 	async function handleVerify() {
 		if (!token.trim()) return;
@@ -106,7 +106,7 @@
 			onsave();
 			onclose();
 		} catch (e: any) {
-			toast.error(e.message || 'Failed to save');
+			toast.error(e.message || $t('messaging.failedToSave'));
 		} finally {
 			saving = false;
 		}
@@ -122,14 +122,14 @@
 		}}
 	>
 		<h2 class="text-sm font-medium text-gray-900 dark:text-white mb-3">
-			{bot ? 'Edit Bot' : 'Add Bot'}
+			{bot ? $t('messaging.editBot') : $t('messaging.addBot')}
 		</h2>
 
 		{#if !bot}
 			<!-- Platform + Name on same row -->
 			<div class="flex gap-3">
 				<div class="flex-1">
-					<label class="text-[10px] text-gray-400 dark:text-gray-600">Name</label>
+					<label class="text-[10px] text-gray-400 dark:text-gray-600">{$t('messaging.name')}</label>
 					<input
 						type="text"
 						bind:value={name}
@@ -141,7 +141,7 @@
 					/>
 				</div>
 				<div class="w-28 shrink-0">
-					<label class="text-[10px] text-gray-400 dark:text-gray-600">Platform</label>
+					<label class="text-[10px] text-gray-400 dark:text-gray-600">{$t('messaging.platform')}</label>
 					<select
 						bind:value={platform}
 						onchange={() => { verifyResult = null; }}
@@ -157,7 +157,7 @@
 			</div>
 		{:else}
 			<!-- Edit mode: just name -->
-			<label class="text-[10px] text-gray-400 dark:text-gray-600">Name</label>
+			<label class="text-[10px] text-gray-400 dark:text-gray-600">{$t('messaging.name')}</label>
 			<input
 				type="text"
 				bind:value={name}
@@ -177,7 +177,7 @@
 			<input
 				type="password"
 				bind:value={token}
-				placeholder={bot ? 'Leave empty to keep current' : platformHints[platform] || 'Paste token'}
+				placeholder={bot ? $t('messaging.tokenKeep') : platformHints[platform] || $t('messaging.tokenPaste')}
 				autocomplete="new-password"
 				class="flex-1 bg-transparent text-[13px] text-gray-700 dark:text-gray-300 placeholder:text-gray-300 dark:placeholder:text-gray-700 outline-none py-0.5 font-mono"
 			/>
@@ -191,7 +191,7 @@
 					{#if verifying}
 						<Spinner size={10} />
 					{:else}
-						Verify
+						{$t('messaging.verify')}
 					{/if}
 				</button>
 			{/if}
@@ -208,8 +208,8 @@
 		{/if}
 
 		<!-- Allowed senders -->
-		<label class="text-[10px] text-gray-400 dark:text-gray-600 mt-1">Allowed senders</label>
-		<p class="text-[10px] text-gray-300 dark:text-gray-700 mb-0.5">Comma-separated user IDs. Leave empty to allow all.</p>
+		<label class="text-[10px] text-gray-400 dark:text-gray-600 mt-1">{$t('messaging.allowedSenders')}</label>
+		<p class="text-[10px] text-gray-300 dark:text-gray-700 mb-0.5">{$t('messaging.allowedSendersHint')}</p>
 		<input
 			type="text"
 			bind:value={allowedSenders}
@@ -249,7 +249,7 @@
 				{#if saving}
 					<Spinner size={14} />
 				{:else}
-					{bot ? 'Save' : 'Add'} →
+					{bot ? $t('messaging.save') : $t('messaging.add')}
 				{/if}
 			</button>
 		</div>

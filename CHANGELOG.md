@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-13
+
+### Added
+
+- 🔌 **Tool servers.** Connect external tools via MCP or OpenAPI. Add servers from the new Tool Servers admin tab, verify the connection, and the AI can use them immediately. Supports bearer auth and custom headers.
+- 🤖 **Sub-agents.** The AI can now spin up sub-agents to work on tasks in parallel. Each sub-agent gets full tool access and runs as a real chat you can inspect afterwards. Configure concurrency and limits from the new Subagents admin tab.
+- ⚡ **Parallel tool execution.** When the AI makes multiple tool calls in one response, they now run concurrently instead of one at a time.
+- 🔐 **Signup toggle.** Enable or disable user registration directly from the Users admin tab.
+- 🧠 **Context compaction threshold in UI.** The token threshold for automatic context compaction can now be set from the Models admin tab instead of editing `config.toml`.
+
+### Changed
+
+- 🏗️ **Admin panel restructure.** The old Settings and Browser panels have been split into focused tabs: **Web** (search providers + browser backends), **Tool Servers**, and **Subagents**.
+- 🌍 **Comprehensive i18n.** 200+ new translation keys across all 10 locales. Almost every remaining hardcoded English string in the UI is now translatable.
+- 🏷️ **External tool labels.** Tool calls from external servers show the tool name and server in the chat UI. Sub-agent tasks show as `Sub-agent: "task…"`.
+
+### Fixed
+
+- 🐛 **Plan mode with external tools.** Plan mode now correctly sees tools from connected external servers, not just built-in ones.
+
 ## [0.3.5] - 2026-06-13
 
 ### Added

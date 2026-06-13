@@ -165,7 +165,7 @@
 		...($voiceMemosEnabled
 			? [
 					{
-						label: 'Voice Memo',
+						label: $t('bar.voiceMemo'),
 						icon: 'microphone',
 						shortcut: formatChord($keybindings.voiceMemo),
 						onclick: () => {
@@ -183,12 +183,12 @@
 
 		if (isWideScreen && tab.type === 'file' && tab.filePath && !$splitActive) {
 			items.push({
-				label: 'Split Right',
+				label: $t('bar.splitRight'),
 				icon: 'split-horizontal',
 				onclick: () => openInSplit(tab.filePath!, 'horizontal')
 			});
 			items.push({
-				label: 'Split Down',
+				label: $t('bar.splitDown'),
 				icon: 'split-vertical',
 				onclick: () => openInSplit(tab.filePath!, 'vertical')
 			});
@@ -210,7 +210,7 @@
 		const direction = $activeWorkspace?.splitDirection ?? 'horizontal';
 		return [
 			{
-				label: 'Split Right',
+				label: $t('bar.splitRight'),
 				icon: 'split-horizontal',
 				active: direction === 'horizontal',
 				onclick: () => {
@@ -219,7 +219,7 @@
 				}
 			},
 			{
-				label: 'Split Down',
+				label: $t('bar.splitDown'),
 				icon: 'split-vertical',
 				active: direction === 'vertical',
 				onclick: () => {
@@ -309,7 +309,7 @@
 						<Icon name={tabIconName(tab)} size={14} />
 					{/if}
 					<span class="max-w-30 overflow-hidden text-ellipsis">
-						{tab.type === 'files' ? ($activeWorkspace?.name ?? 'Files') : tab.label}
+						{tab.type === 'files' ? ($activeWorkspace?.name ?? $t('bar.files')) : tab.label}
 					</span>
 					{#if tab.unsaved}<span class="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0"></span>{/if}
 					{#if !tab.permanent}
@@ -354,8 +354,8 @@
 					? 'bg-gray-200/50 text-gray-900 dark:bg-white/8 dark:text-white'
 					: 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}"
 				onclick={() => (showSplitMenu = !showSplitMenu)}
-				aria-label="Split Editor"
-				use:tooltip={'Split Editor'}
+				aria-label={$t('a11y.splitEditor')}
+				use:tooltip={$t('a11y.splitEditor')}
 			>
 				<Icon
 					name={$activeWorkspace?.splitDirection === 'vertical'
@@ -371,8 +371,8 @@
 			<button
 				class="flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 shrink-0"
 				onclick={() => closeGroup(group.id)}
-				aria-label="Close pane"
-				use:tooltip={'Close pane'}
+				aria-label={$t('a11y.closePane')}
+				use:tooltip={$t('a11y.closePane')}
 			>
 				<Icon name="xmark" size={12} />
 			</button>

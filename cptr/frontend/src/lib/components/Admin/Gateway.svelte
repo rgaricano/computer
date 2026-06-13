@@ -167,7 +167,7 @@
 						class="shrink-0 text-[11px] text-gray-500 hover:text-gray-900 dark:text-gray-500 dark:hover:text-white transition-colors"
 						onclick={copyKey}
 					>
-						Copy
+						{$t('admin.gateway.copy')}
 					</button>
 				</div>
 				<div class="flex items-center gap-2">
@@ -183,7 +183,7 @@
 			</div>
 		{/if}
 
-		<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2">Keys</h3>
+		<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2">{$t('admin.gateway.keys')}</h3>
 		<div class="flex items-center gap-2 mb-4">
 			<input
 				type="text"
@@ -246,23 +246,23 @@
 			</h3>
 			<div class="space-y-1.5 text-[11px] font-mono text-gray-600 dark:text-gray-400">
 				<div>
-					<span class="text-gray-400 dark:text-gray-600">Base URL:</span>
+					<span class="text-gray-400 dark:text-gray-600">{$t('admin.gateway.baseUrl')}</span>
 					<span class="text-gray-700 dark:text-gray-300"
 						>{`${typeof window !== 'undefined' ? window.location.origin : ''}/v1`}</span
 					>
 				</div>
 				<div>
-					<span class="text-gray-400 dark:text-gray-600">API Key:</span>
+					<span class="text-gray-400 dark:text-gray-600">{$t('admin.gateway.apiKey')}</span>
 					<span class="text-gray-700 dark:text-gray-300">sk-cptr-...</span>
 				</div>
 				<div class="pt-1">
 					<div class="flex items-center justify-between gap-2 mb-1">
-						<span class="text-gray-400 dark:text-gray-600">Headers:</span>
+						<span class="text-gray-400 dark:text-gray-600">{$t('admin.gateway.headers')}</span>
 						<button
 							class="shrink-0 text-[11px] font-sans text-gray-500 hover:text-gray-900 dark:text-gray-500 dark:hover:text-white transition-colors"
 							onclick={copyHeaders}
 						>
-							Copy
+							{$t('admin.gateway.copy')}
 						</button>
 					</div>
 					<button
