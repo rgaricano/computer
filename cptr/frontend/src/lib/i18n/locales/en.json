@@ -680,6 +680,18 @@
 	"toolServers.updated": "Tool server updated",
 	"toolServers.deleted": "Tool server deleted",
 	"toolServers.saveFailed": "Failed to save tool server",
-	"toolServers.deleteFailed": "Failed to delete tool server"
+	"toolServers.deleteFailed": "Failed to delete tool server",
+
+	"admin.subagents": "Sub-agents",
+	"admin.subagentsEnabled": "Enable sub-agents",
+	"admin.subagentsHint": "Allow the AI to delegate tasks to sub-agents. Each sub-agent creates a real chat with full tool access. Uses additional LLM calls.",
+	"admin.subagentsMaxConcurrent": "Max concurrent",
+	"admin.subagentsMaxConcurrentHint": "simultaneous sub-agents",
+	"admin.subagentsMaxIterations": "Max iterations",
+	"admin.subagentsMaxIterationsHint": "tool loops per sub-agent",
+	"admin.subagentsMaxOutput": "Max output",
+	"admin.subagentsSystemPrompt": "System prompt",
+	"admin.subagentsSystemPromptPlaceholder": "You are a sub-agent...",
+	"admin.subagentsSystemPromptHint": "Leave empty for the built-in default."
 }
 

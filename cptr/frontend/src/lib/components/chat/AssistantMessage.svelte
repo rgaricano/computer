@@ -178,6 +178,10 @@
 					return _t('chat.tool.fetchUrlFallback');
 				}
 			}
+			case 'delegate_task': {
+				const t = args.task || '?';
+				return `Sub-agent: "${t.length > 60 ? t.slice(0, 60) + '…' : t}"`;
+			}
 			default: {
 				// External tool: {server_id}_{tool_name} → "tool_name (server_id)"
 				const idx = name.indexOf('_');

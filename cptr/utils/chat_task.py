@@ -861,8 +861,12 @@ async def run_chat_task(
         if not skills:
             tools = [t for t in tools if t["name"] != "view_skill"]
 
-        # Parse $skill-name mentions from the user message to auto-activate skills
+        # Strip delegate_task from sub-agent chats (depth limit = 1)
         chat_obj = await Chat.get_by_id(chat_id)
+        if chat_obj and (chat_obj.meta or {}).get("subagent"):
+            tools = [t for t in tools if t["name"] != "delegate_task"]
+
+        # Parse $skill-name mentions from the user message to auto-activate skills
         chat_params = (chat_obj.meta or {}).get("params", {}) if chat_obj else {}
         attached_skill_ids: list[str] = []
         if skills and messages:
@@ -1024,6 +1028,7 @@ async def run_chat_task(
                 )
 
             restart = False
+            pending_calls: list[dict] = []  # Collect tool calls from this response
 
             async for event in stream:
                 if event["type"] == "text_delta":
@@ -1033,93 +1038,8 @@ async def run_chat_task(
                     _sync_state()
 
                 elif event["type"] == "tool_call":
-                    # Flush any text before the tool call
-                    flushed_item = _flush_text()
-
-                    name = event["name"]
-                    tool = ALL_TOOLS.get(name)
-                    item = {
-                        "type": "function_call",
-                        "id": str(uuid.uuid4()),
-                        "call_id": event["call_id"],
-                        "fc_id": event.get("id", ""),
-                        "name": name,
-                        "arguments": event["arguments"],
-                    }
-
-                    should_auto = approval_mode == "full" or (
-                        approval_mode == "auto" and tool and tool["auto"]
-                    )
-
-                    if should_auto:
-                        # Show tool call in progress BEFORE execution
-                        item["status"] = "in_progress"
-                        output_items.append(item)
-                        if flushed_item:
-                            await emit(output=flushed_item)
-                        await emit(output=item)
-                        _sync_state()
-
-                        if name == "create_artifact":
-                            result = await create_artifact(
-                                **event["arguments"], workspace=workspace
-                            )
-                        else:
-                            result = await execute_tool(
-                                name,
-                                event["arguments"],
-                                {
-                                    "workspace": workspace,
-                                    "user_id": user_id,
-                                    "model_id": model,
-                                    "chat_id": chat_id,
-                                },
-                            )
-
-                        # Update status to completed
-                        item["status"] = "completed"
-                        result_item = {
-                            "type": "function_call_output",
-                            "call_id": event["call_id"],
-                            "output": result,
-                        }
-                        output_items.append(result_item)
-                        await emit(output=item)
-                        await emit(output=result_item)
-                        _sync_state()
-
-                        # Artifact UI card: detect create_artifact or create_file with artifact_type
-                        artifact_item = build_artifact_item(name, event["arguments"], result)
-                        if artifact_item:
-                            output_items.append(artifact_item)
-                            await emit(output=artifact_item)
-                            _sync_state()
-
-                        # Persist intermediate state so content survives crashes/errors
-                        await ChatMessage.update(message_id, content=content, output=output_items)
-
-                        # Append to messages for next iteration
-                        _append_tool_to_messages(messages, event, result, provider)
-                        new_messages_since += 2  # tool_call + tool_result
-                        restart = True
-                        break
-
-                    else:
-                        # Needs approval, persist and stop
-                        item["status"] = "pending"
-                        output_items.append(item)
-                        await ChatMessage.update(
-                            message_id,
-                            content=content,
-                            output=output_items,
-                            done=False,
-                        )
-                        if flushed_item:
-                            await emit(output=flushed_item)
-                        await emit(output=item)
-                        _task_state.pop(message_id, None)
-                        await emit(done=True)
-                        return
+                    # Collect tool call — don't execute yet
+                    pending_calls.append(event)
 
                 elif event["type"] == "usage":
                     _flush_text()
@@ -1130,27 +1050,174 @@ async def run_chat_task(
                         )
                     last_usage = usage
                     new_messages_since = 0
-                    logger.info(
-                        "[task %s] save (usage): content=%d chars, output=%d items, types=%s",
-                        message_id[:8],
-                        len(content),
-                        len(output_items),
-                        [i.get("type") for i in output_items],
-                    )
-                    await ChatMessage.update(
-                        message_id,
-                        content=content,
-                        output=output_items,
-                        usage=usage,
-                        done=True,
-                    )
-                    _task_state.pop(message_id, None)
-                    await _emit_done()
-                    return
+
+                    if not pending_calls:
+                        # No tool calls — final response, we're done
+                        logger.info(
+                            "[task %s] save (usage): content=%d chars, output=%d items, types=%s",
+                            message_id[:8],
+                            len(content),
+                            len(output_items),
+                            [i.get("type") for i in output_items],
+                        )
+                        await ChatMessage.update(
+                            message_id,
+                            content=content,
+                            output=output_items,
+                            usage=usage,
+                            done=True,
+                        )
+                        _task_state.pop(message_id, None)
+                        await _emit_done()
+                        return
 
                 elif event["type"] == "done":
                     # Stream ended without explicit usage
                     pass
+
+            # ── Process collected tool calls ────────────────────
+            if pending_calls:
+                flushed_item = _flush_text()
+
+                tool_ctx = {
+                    "workspace": workspace,
+                    "user_id": user_id,
+                    "model_id": model,
+                    "chat_id": chat_id,
+                    "connection": connection,
+                }
+
+                # Check if any call needs approval
+                needs_approval = None
+                for tc in pending_calls:
+                    name = tc["name"]
+                    tool = ALL_TOOLS.get(name)
+                    should_auto = approval_mode == "full" or (
+                        approval_mode == "auto" and tool and tool["auto"]
+                    )
+                    if not should_auto:
+                        needs_approval = tc
+                        break
+
+                if needs_approval:
+                    # First non-auto tool stops the loop for approval
+                    tc = needs_approval
+                    item = {
+                        "type": "function_call",
+                        "id": str(uuid.uuid4()),
+                        "call_id": tc["call_id"],
+                        "fc_id": tc.get("id", ""),
+                        "name": tc["name"],
+                        "arguments": tc["arguments"],
+                        "status": "pending",
+                    }
+                    output_items.append(item)
+                    await ChatMessage.update(
+                        message_id,
+                        content=content,
+                        output=output_items,
+                        done=False,
+                    )
+                    if flushed_item:
+                        await emit(output=flushed_item)
+                    await emit(output=item)
+                    _task_state.pop(message_id, None)
+                    await emit(done=True)
+                    return
+
+                # All calls are auto-approved — build UI items
+                call_items: list[tuple[dict, dict]] = []  # (event, ui_item)
+                for tc in pending_calls:
+                    item = {
+                        "type": "function_call",
+                        "id": str(uuid.uuid4()),
+                        "call_id": tc["call_id"],
+                        "fc_id": tc.get("id", ""),
+                        "name": tc["name"],
+                        "arguments": tc["arguments"],
+                        "status": "in_progress",
+                    }
+                    output_items.append(item)
+                    call_items.append((tc, item))
+
+                # Emit all as in_progress
+                if flushed_item:
+                    await emit(output=flushed_item)
+                for _, item in call_items:
+                    await emit(output=item)
+                _sync_state()
+
+                # Separate delegate_task (concurrent) from others (sequential)
+                delegate_indices = [i for i, (tc, _) in enumerate(call_items) if tc["name"] == "delegate_task"]
+                other_indices = [i for i, (tc, _) in enumerate(call_items) if tc["name"] != "delegate_task"]
+
+                # Execute non-delegate tools sequentially first
+                for idx in other_indices:
+                    tc, item = call_items[idx]
+                    if tc["name"] == "create_artifact":
+                        result = await create_artifact(**tc["arguments"], workspace=workspace)
+                    else:
+                        result = await execute_tool(tc["name"], tc["arguments"], tool_ctx)
+
+                    item["status"] = "completed"
+                    result_item = {
+                        "type": "function_call_output",
+                        "call_id": tc["call_id"],
+                        "output": result,
+                    }
+                    output_items.append(result_item)
+                    await emit(output=item)
+                    await emit(output=result_item)
+                    _sync_state()
+
+                    artifact_item = build_artifact_item(tc["name"], tc["arguments"], result)
+                    if artifact_item:
+                        output_items.append(artifact_item)
+                        await emit(output=artifact_item)
+                        _sync_state()
+
+                    _append_tool_to_messages(messages, tc, result, provider)
+                    new_messages_since += 2
+
+                # Execute delegate_task calls concurrently, emit each as it completes
+                if delegate_indices:
+                    # Create tasks, mapping task → index
+                    inflight: dict[asyncio.Task, int] = {}
+                    for idx in delegate_indices:
+                        tc, _ = call_items[idx]
+                        task = asyncio.create_task(
+                            execute_tool(tc["name"], tc["arguments"], tool_ctx)
+                        )
+                        inflight[task] = idx
+
+                    while inflight:
+                        done_set, _ = await asyncio.wait(
+                            inflight.keys(), return_when=asyncio.FIRST_COMPLETED
+                        )
+                        for task in done_set:
+                            idx = inflight.pop(task)
+                            tc, item = call_items[idx]
+                            try:
+                                result = task.result()
+                            except Exception as e:
+                                result = f"Error: {e}"
+
+                            item["status"] = "completed"
+                            result_item = {
+                                "type": "function_call_output",
+                                "call_id": tc["call_id"],
+                                "output": result,
+                            }
+                            output_items.append(result_item)
+                            await emit(output=item)
+                            await emit(output=result_item)
+                            _sync_state()
+                            _append_tool_to_messages(messages, tc, result, provider)
+                            new_messages_since += 2
+
+                # Persist after all tool calls
+                await ChatMessage.update(message_id, content=content, output=output_items)
+                restart = True
 
             if not restart:
                 flushed_item = _flush_text()

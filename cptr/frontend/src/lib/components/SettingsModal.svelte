@@ -13,6 +13,7 @@
 	import AudioSettings from './Admin/AudioSettings.svelte';
 	import AdminWeb from './Admin/Web.svelte';
 	import ToolServers from './Admin/ToolServers.svelte';
+	import Subagents from './Admin/Subagents.svelte';
 	import { session } from '$lib/session';
 	import { t } from '$lib/i18n';
 
@@ -28,7 +29,8 @@
 		| 'gateway'
 		| 'audio'
 		| 'web'
-		| 'toolservers';
+		| 'toolservers'
+		| 'subagents';
 
 	interface Props {
 		onclose: () => void;
@@ -56,7 +58,8 @@
 		{ id: 'gateway', label: $t('admin.gateway.tab'), icon: 'gateway' },
 		{ id: 'audio', label: $t('admin.audio.title'), icon: 'microphone' },
 		{ id: 'web', label: $t('admin.web'), icon: 'globe' },
-		{ id: 'toolservers', label: $t('admin.toolServers'), icon: 'plug' }
+		{ id: 'toolservers', label: $t('admin.toolServers'), icon: 'plug' },
+		{ id: 'subagents', label: $t('admin.subagents'), icon: 'user' }
 	]);
 </script>
 
@@ -137,6 +140,8 @@
 			<AdminWeb />
 		{:else if activeTab === 'toolservers'}
 			<ToolServers />
+		{:else if activeTab === 'subagents'}
+			<Subagents />
 		{/if}
 	</div>
 </Modal>

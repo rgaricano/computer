@@ -1208,8 +1208,149 @@ BROWSER_TOOLS: dict[str, dict] = {
     "browser_evaluate": {"fn": browser_evaluate, "auto": False},
 }
 
+
+# ── Sub-agent ───────────────────────────────────────────────
+
+_DEFAULT_SUBAGENT_SYSTEM = """You are a sub-agent working on a specific task assigned by the lead agent.
+
+You have full access to the workspace — you can read, write, edit files, and run commands.
+Focus exclusively on your assigned task. Do NOT work on anything outside your scope.
+
+When done, end with a clear summary:
+- What you did
+- What files you changed (if any)
+- Any issues or open questions
+"""
+
+_subagent_semaphore: asyncio.Semaphore | None = None
+
+
+async def _get_subagent_config() -> dict:
+    """Load sub-agent settings from config with defaults."""
+    from cptr.models import Config
+
+    return {
+        "max_concurrent": int(await Config.get("subagents.max_concurrent") or 3),
+        "max_iterations": int(await Config.get("subagents.max_iterations") or 30),
+        "max_output": int(await Config.get("subagents.max_output") or 30_000),
+        "system_prompt": (await Config.get("subagents.system_prompt"))
+        or _DEFAULT_SUBAGENT_SYSTEM,
+    }
+
+
+def _truncate_output(text: str, max_chars: int) -> str:
+    """Truncate text to max_chars, appending a note if truncated."""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n\n[output truncated]"
+
+
+async def delegate_task(
+    task: str,
+    context: str = "",
+    *,
+    __context__: dict,
+) -> str:
+    """Delegate a task to a sub-agent. The sub-agent has full access to read, write, edit files, and run commands. Use for parallel work — call multiple times in one response to run tasks concurrently.
+
+    :param task: What the sub-agent should do.
+    :param context: Optional context (e.g. relevant file paths, decisions made so far).
+    """
+    global _subagent_semaphore
+    config = await _get_subagent_config()
+    if _subagent_semaphore is None:
+        _subagent_semaphore = asyncio.Semaphore(config["max_concurrent"])
+
+    async with _subagent_semaphore:
+        return await _run_subagent_chat(
+            task=task,
+            context=context,
+            workspace=__context__["workspace"],
+            connection=__context__["connection"],
+            model=__context__["model_id"],
+            user_id=__context__["user_id"],
+            parent_chat_id=__context__["chat_id"],
+            config=config,
+        )
+
+
+async def _run_subagent_chat(
+    task: str,
+    context: str,
+    workspace: str,
+    connection: dict,
+    model: str,
+    user_id: str,
+    parent_chat_id: str,
+    config: dict,
+) -> str:
+    """Create a real chat and run the agent loop on it."""
+    from cptr.models import Chat, ChatMessage
+    from cptr.utils.chat_task import run_chat_task
+    from cptr.utils.config import now_ms
+
+    # Build the user message content
+    user_content = f"{task}\n\n## Context\n{context}" if context else task
+
+    # Create a real chat, marked as a sub-agent
+    chat = await Chat.create(
+        user_id=user_id,
+        title=f"Sub-agent: {task[:60]}",
+        meta={
+            "workspace": workspace,
+            "subagent": True,
+            "parent_chat_id": parent_chat_id,
+            "params": {
+                "tool_approval_mode": "full",  # auto-approve all tools
+            },
+        },
+        created_at=now_ms(),
+    )
+
+    # Create user message
+    user_msg = await ChatMessage.create(
+        chat_id=chat.id,
+        role="user",
+        content=user_content,
+        created_at=now_ms(),
+    )
+
+    # Create empty assistant message
+    assistant_msg = await ChatMessage.create(
+        chat_id=chat.id,
+        role="assistant",
+        content="",
+        parent_id=user_msg.id,
+        model=model,
+        done=False,
+        created_at=now_ms(),
+    )
+
+    await Chat.update_current_message(chat.id, assistant_msg.id, now_ms())
+
+    # Run the SAME agent loop as a normal chat — no special code
+    await run_chat_task(
+        message_id=assistant_msg.id,
+        chat_id=chat.id,
+        user_id=user_id,
+        connection=connection,
+        workspace=workspace,
+        model=model,
+    )
+
+    # Read back the completed message
+    result_msg = await ChatMessage.get_by_id(assistant_msg.id)
+    output = result_msg.content if result_msg else "Sub-agent produced no output."
+
+    return _truncate_output(output, config["max_output"])
+
+
+SUBAGENT_TOOLS: dict[str, dict] = {
+    "delegate_task": {"fn": delegate_task, "auto": True},
+}
+
 # Combined lookup for execution and approval (always available regardless of config)
-ALL_TOOLS: dict[str, dict] = {**TOOLS, **BROWSER_TOOLS}
+ALL_TOOLS: dict[str, dict] = {**TOOLS, **BROWSER_TOOLS, **SUBAGENT_TOOLS}
 
 
 # ── External tool servers ───────────────────────────────────
@@ -1424,6 +1565,8 @@ async def get_tool_list() -> list[dict]:
 
         if (await Config.get("browser.enabled")) in (True, "true", "1"):
             tools.update(BROWSER_TOOLS)
+        if (await Config.get("subagents.enabled")) in (True, "true", "1"):
+            tools.update(SUBAGENT_TOOLS)
     except Exception:
         pass
 
