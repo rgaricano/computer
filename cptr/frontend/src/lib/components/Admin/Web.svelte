@@ -122,7 +122,7 @@
 		<div class="flex justify-center py-8"><Spinner size={16} /></div>
 	{:else}
 		<!-- Search -->
-		<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2">Search</h3>
+		<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2">{$t('admin.webSearch')}</h3>
 
 		<div class="flex flex-col gap-2.5">
 			<label class="flex items-center justify-between cursor-pointer">
@@ -207,50 +207,50 @@
 		</div>
 
 		<!-- Browser -->
-		<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2 mt-5">Browser</h3>
+		<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2 mt-5">{$t('admin.browser')}</h3>
 
 		<div class="flex flex-col gap-2.5">
 			<label class="flex items-center justify-between cursor-pointer">
-				<span class="text-xs text-gray-600 dark:text-gray-400">Browser tools</span>
+				<span class="text-xs text-gray-600 dark:text-gray-400">{$t('admin.browserTools')}</span>
 				<ToggleSwitch value={browserEnabled} onchange={(v) => { browserEnabled = v; }} />
 			</label>
 			<p class="text-[11px] text-gray-400 dark:text-gray-600 -mt-1">
-				Give the AI access to a web browser for navigating pages, clicking elements, and taking screenshots.
+				{$t('admin.browserHint')}
 			</p>
 
 			{#if browserEnabled}
 				<div class="flex items-center justify-between">
-					<span class="text-xs text-gray-600 dark:text-gray-400">Provider</span>
+					<span class="text-xs text-gray-600 dark:text-gray-400">{$t('admin.browserProvider')}</span>
 					<select
 						bind:value={browserProvider}
 						class="bg-transparent text-xs text-gray-600 dark:text-gray-400 outline-none cursor-pointer"
 					>
-						<option value="local">Local CDP</option>
-						<option value="firecrawl">Firecrawl</option>
-						<option value="browser_use">Browser-Use</option>
+						<option value="local">{$t('admin.browserLocalCdp')}</option>
+						<option value="firecrawl">{$t('admin.browserFirecrawl')}</option>
+						<option value="browser_use">{$t('admin.browserBrowserUse')}</option>
 					</select>
 				</div>
 				<p class="text-[11px] text-gray-400 dark:text-gray-600 -mt-1">
 					{#if browserProvider === 'local'}
-						Connects to Chrome via DevTools Protocol. Full interactive browsing with clicking, typing, and screenshots.
+						{$t('admin.browserLocalHint')}
 					{:else if browserProvider === 'firecrawl'}
-						Cloud API that converts web pages to markdown. Fast extraction, no interactive browsing.
+						{$t('admin.browserFirecrawlHint')}
 					{:else}
-						Cloud API for LLM-driven browser tasks. Describe what you need in natural language.
+						{$t('admin.browserBrowserUseHint')}
 					{/if}
 				</p>
 
 				{#if browserProvider === 'local'}
 					<label class="flex items-center justify-between cursor-pointer">
 						<div>
-							<span class="text-xs text-gray-600 dark:text-gray-400">Auto-launch Chrome</span>
-							<p class="text-[10px] text-gray-400 dark:text-gray-600">Start a headless Chrome if none is running</p>
+							<span class="text-xs text-gray-600 dark:text-gray-400">{$t('admin.browserAutoLaunch')}</span>
+							<p class="text-[10px] text-gray-400 dark:text-gray-600">{$t('admin.browserAutoLaunchHint')}</p>
 						</div>
 						<ToggleSwitch value={autoLaunch} onchange={(v) => { autoLaunch = v; }} />
 					</label>
 
 					<div>
-						<label class="text-xs text-gray-600 dark:text-gray-400" for="cdp-url">CDP URL</label>
+						<label class="text-xs text-gray-600 dark:text-gray-400" for="cdp-url">{$t('admin.browserCdpUrl')}</label>
 						<div class="flex gap-1.5 mt-1">
 							<input id="cdp-url" type="text" bind:value={cdpUrl} placeholder="http://localhost:9222"
 								class="flex-1 h-7 px-2 rounded-lg text-xs bg-gray-100 dark:bg-white/6 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-white/8 outline-none focus:border-blue-400 dark:focus:border-blue-500 transition-colors" />
@@ -258,7 +258,7 @@
 								class="h-7 px-2.5 rounded-lg text-xs bg-gray-200/50 dark:bg-white/8 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors disabled:opacity-50"
 								onclick={() => testConnection()}
 								disabled={testing}
-							>{testing ? '...' : 'Test'}</button>
+							>{testing ? '...' : $t('admin.browserTest')}</button>
 						</div>
 						{#if testResult}
 							<p class="text-[11px] mt-1 {testResult.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}">
@@ -268,33 +268,33 @@
 					</div>
 
 					<div>
-						<label class="text-xs text-gray-600 dark:text-gray-400" for="session-timeout">Session timeout</label>
+						<label class="text-xs text-gray-600 dark:text-gray-400" for="session-timeout">{$t('admin.browserSessionTimeout')}</label>
 						<div class="flex items-center gap-1.5 mt-1">
 							<input id="session-timeout" type="number" bind:value={sessionTimeout} min="1" max="120"
 								class="w-16 h-7 px-2 rounded-lg text-xs bg-gray-100 dark:bg-white/6 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-white/8 outline-none focus:border-blue-400 dark:focus:border-blue-500 transition-colors" />
-							<span class="text-[11px] text-gray-400 dark:text-gray-600">minutes</span>
+							<span class="text-[11px] text-gray-400 dark:text-gray-600">{$t('admin.browserMinutes')}</span>
 						</div>
 					</div>
 				{:else if browserProvider === 'firecrawl'}
 					<div>
-						<label class="text-xs text-gray-600 dark:text-gray-400" for="fc-key">API Key</label>
+						<label class="text-xs text-gray-600 dark:text-gray-400" for="fc-key">{$t('admin.browserApiKey')}</label>
 						<input id="fc-key" type="password" bind:value={firecrawlApiKey} placeholder="fc-..."
 							class="w-full mt-1 h-7 px-2 rounded-lg text-xs bg-gray-100 dark:bg-white/6 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-white/8 outline-none focus:border-blue-400 dark:focus:border-blue-500 transition-colors" />
 					</div>
 					<div>
-						<label class="text-xs text-gray-600 dark:text-gray-400" for="fc-url">Base URL</label>
+						<label class="text-xs text-gray-600 dark:text-gray-400" for="fc-url">{$t('admin.browserBaseUrl')}</label>
 						<input id="fc-url" type="text" bind:value={firecrawlBaseUrl} placeholder="https://api.firecrawl.dev"
 							class="w-full mt-1 h-7 px-2 rounded-lg text-xs bg-gray-100 dark:bg-white/6 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-white/8 outline-none focus:border-blue-400 dark:focus:border-blue-500 transition-colors" />
-						<p class="text-[11px] text-gray-400 dark:text-gray-600 mt-0.5">Change for self-hosted Firecrawl instances</p>
+						<p class="text-[11px] text-gray-400 dark:text-gray-600 mt-0.5">{$t('admin.browserFirecrawlBaseUrlHint')}</p>
 					</div>
 				{:else if browserProvider === 'browser_use'}
 					<div>
-						<label class="text-xs text-gray-600 dark:text-gray-400" for="bu-key">API Key</label>
+						<label class="text-xs text-gray-600 dark:text-gray-400" for="bu-key">{$t('admin.browserApiKey')}</label>
 						<input id="bu-key" type="password" bind:value={browserUseApiKey} placeholder="bu-..."
 							class="w-full mt-1 h-7 px-2 rounded-lg text-xs bg-gray-100 dark:bg-white/6 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-white/8 outline-none focus:border-blue-400 dark:focus:border-blue-500 transition-colors" />
 					</div>
 					<div>
-						<label class="text-xs text-gray-600 dark:text-gray-400" for="bu-url">Base URL</label>
+						<label class="text-xs text-gray-600 dark:text-gray-400" for="bu-url">{$t('admin.browserBaseUrl')}</label>
 						<input id="bu-url" type="text" bind:value={browserUseBaseUrl} placeholder="https://api.browser-use.com"
 							class="w-full mt-1 h-7 px-2 rounded-lg text-xs bg-gray-100 dark:bg-white/6 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-white/8 outline-none focus:border-blue-400 dark:focus:border-blue-500 transition-colors" />
 					</div>

@@ -156,9 +156,9 @@
 		try {
 			verifyResult = await verifyToolServer(editServer.id);
 			if (verifyResult.ok) toast.success($t('toolServers.connected'));
-			else toast.error(verifyResult.message || 'Connection failed');
+			else toast.error(verifyResult.message || $t('toolServers.connectionFailed'));
 		} catch (e: any) {
-			verifyResult = { ok: false, message: e?.message || 'Connection failed' };
+			verifyResult = { ok: false, message: e?.message || $t('toolServers.connectionFailed') };
 			toast.error(verifyResult.message!);
 		} finally {
 			verifying = false;
@@ -269,7 +269,7 @@
 					>
 					<input
 						type="text"
-						placeholder="my_server"
+						placeholder={$t('toolServers.idPlaceholder')}
 						bind:value={formId}
 						autofocus
 						autocomplete="off"
@@ -286,8 +286,8 @@
 						bind:value={formType}
 						class="block w-full bg-transparent text-[13px] text-gray-700 dark:text-gray-300 outline-none py-0.5 cursor-pointer"
 					>
-						<option value="openapi">OpenAPI</option>
-						<option value="mcp">MCP</option>
+						<option value="openapi">{$t('toolServers.typeOpenAPI')}</option>
+						<option value="mcp">{$t('toolServers.typeMCP')}</option>
 					</select>
 				</div>
 			</div>
@@ -298,7 +298,7 @@
 			>
 			<input
 				type="text"
-				placeholder="Optional display name"
+				placeholder={$t('toolServers.namePlaceholder')}
 				bind:value={formName}
 				autocomplete="off"
 				spellcheck="false"
@@ -356,7 +356,7 @@
 						>
 						<input
 							type="password"
-							placeholder={editServer ? '••••••••  (leave blank to keep)' : 'sk-...'}
+							placeholder={editServer ? $t('toolServers.apiKeyKeep') : 'sk-...'}
 							bind:value={formKey}
 							autocomplete="new-password"
 							class="block w-full bg-transparent text-[13px] text-gray-700 dark:text-gray-300 placeholder:text-gray-300 dark:placeholder:text-gray-700 outline-none py-0.5 font-mono"
