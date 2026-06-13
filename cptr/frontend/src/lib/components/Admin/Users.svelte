@@ -4,10 +4,11 @@
 	import CreateUserModal from './CreateUserModal.svelte';
 	import EditUserModal from './EditUserModal.svelte';
 	import { onMount } from 'svelte';
-	import { listUsers } from '$lib/apis/admin';
+	import { listUsers, getAdminConfig, updateConfig } from '$lib/apis/admin';
 	import { session } from '$lib/session';
 	import { t } from '$lib/i18n';
 	import Spinner from '$lib/components/common/Spinner.svelte';
+	import ToggleSwitch from '$lib/components/common/ToggleSwitch.svelte';
 
 	interface User {
 		user_id: string;
@@ -23,6 +24,10 @@
 	let users = $state<User[]>([]);
 	let loading = $state(true);
 	let page = $state(0);
+
+	// Auth config
+	let signupEnabled = $state(false);
+	let savingConfig = $state(false);
 
 	let showCreate = $state(false);
 	let editUser = $state<User | null>(null);
@@ -41,6 +46,26 @@
 		}
 	}
 
+	async function loadAuthConfig() {
+		try {
+			const config = await getAdminConfig();
+			signupEnabled = config['auth.signup_enabled'] === true;
+		} catch {}
+	}
+
+	async function toggleSignup(value: boolean) {
+		savingConfig = true;
+		try {
+			await updateConfig({ 'auth.signup_enabled': value });
+			signupEnabled = value;
+			toast.success($t('settings.saved'));
+		} catch {
+			toast.error($t('admin.failedToSave'));
+		} finally {
+			savingConfig = false;
+		}
+	}
+
 	function handleCreated() {
 		showCreate = false;
 		loadUsers();
@@ -52,7 +77,10 @@
 		if (page >= totalPages) page = Math.max(0, totalPages - 1);
 	}
 
-	onMount(loadUsers);
+	onMount(() => {
+		loadUsers();
+		loadAuthConfig();
+	});
 </script>
 
 <div class="flex items-center justify-between mb-4">
@@ -63,6 +91,21 @@
 	>
 		<Icon name="plus" size={14} />
 	</button>
+</div>
+
+<!-- Sign-up toggle -->
+<div class="flex flex-col gap-2.5 mb-3">
+	<label class="flex items-center justify-between cursor-pointer">
+		<span class="text-xs text-gray-600 dark:text-gray-400">{$t('admin.allowSignUp')}</span>
+		<ToggleSwitch
+			value={signupEnabled}
+			onchange={(v) => toggleSignup(v)}
+			disabled={savingConfig}
+		/>
+	</label>
+	<p class="text-[11px] text-gray-400 dark:text-gray-600 -mt-1">
+		{signupEnabled ? $t('admin.signUpEnabled') : $t('admin.signUpDisabled')}
+	</p>
 </div>
 
 {#if loading}

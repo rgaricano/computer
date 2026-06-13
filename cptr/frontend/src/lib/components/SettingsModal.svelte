@@ -4,7 +4,6 @@
 	import General from './Settings/General.svelte';
 	import Account from './Settings/Account.svelte';
 	import Keyboard from './Settings/Keyboard.svelte';
-	import Browser from './Settings/Browser.svelte';
 	import About from './Settings/About.svelte';
 	import Users from './Admin/Users.svelte';
 	import Connections from './Admin/Connections.svelte';
@@ -12,14 +11,13 @@
 	import Messaging from './Admin/Messaging.svelte';
 	import Gateway from './Admin/Gateway.svelte';
 	import AudioSettings from './Admin/AudioSettings.svelte';
-	import AdminSettings from './Admin/Settings.svelte';
+	import AdminWeb from './Admin/Web.svelte';
 	import { session } from '$lib/session';
 	import { t } from '$lib/i18n';
 
 	type Tab =
 		| 'general'
 		| 'keyboard'
-		| 'browser'
 		| 'account'
 		| 'about'
 		| 'users'
@@ -28,7 +26,7 @@
 		| 'messaging'
 		| 'gateway'
 		| 'audio'
-		| 'admin_settings';
+		| 'web';
 
 	interface Props {
 		onclose: () => void;
@@ -55,8 +53,7 @@
 		{ id: 'messaging', label: $t('admin.messaging'), icon: 'chat-bubble' },
 		{ id: 'gateway', label: $t('admin.gateway.tab'), icon: 'gateway' },
 		{ id: 'audio', label: 'Audio', icon: 'microphone' },
-		{ id: 'browser', label: 'Browser', icon: 'browser' },
-		{ id: 'admin_settings', label: $t('settings.configuration'), icon: 'shield' }
+		{ id: 'web', label: $t('admin.web'), icon: 'globe' }
 	]);
 </script>
 
@@ -117,8 +114,6 @@
 			<General />
 		{:else if activeTab === 'keyboard'}
 			<Keyboard />
-		{:else if activeTab === 'browser'}
-			<Browser />
 		{:else if activeTab === 'account'}
 			<Account />
 		{:else if activeTab === 'about'}
@@ -135,8 +130,8 @@
 			<Gateway />
 		{:else if activeTab === 'audio'}
 			<AudioSettings />
-		{:else if activeTab === 'admin_settings'}
-			<AdminSettings />
+		{:else if activeTab === 'web'}
+			<AdminWeb />
 		{/if}
 	</div>
 </Modal>

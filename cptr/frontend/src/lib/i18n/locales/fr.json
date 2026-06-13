@@ -295,7 +295,6 @@
 	"general.queueDesc": "Les messages envoyés pendant la génération sont mis en file et envoyés après la fin.",
 	"general.interruptDesc": "L'envoi d'un message annule la génération en cours.",
 	"settings.keyboard": "Clavier",
-	"settings.configuration": "Configuration",
 	"keyboard.title": "Raccourcis clavier",
 	"keyboard.resetDefaults": "Réinitialiser",
 	"keyboard.command": "Commande",

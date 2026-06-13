@@ -322,7 +322,6 @@
 	"general.interruptDesc": "Sending a message cancels the current generation.",
 
 	"settings.keyboard": "Keyboard",
-	"settings.configuration": "Configuration",
 
 	"keyboard.title": "Keyboard Shortcuts",
 	"keyboard.resetDefaults": "Reset defaults",
