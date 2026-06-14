@@ -63,6 +63,8 @@ Bring your own API key. Works with OpenAI, Anthropic, Ollama, or any OpenAI-comp
 | 🔌 **Tool servers** | Connect external tools via MCP or OpenAPI. |
 | 🧠 **Context compaction** | Long conversations are automatically summarised to stay fast. |
 
+Already have a favourite terminal agent? Claude Code, Codex, Gemini CLI, Cursor, Grok, OpenCode, Kilo Code, and Pi all plug straight in. Use the subscription you already pay for.
+
 ## Messaging bots
 
 Connect the AI to your chat apps. Full tool access, streaming responses, conversations synced back to the web UI.
