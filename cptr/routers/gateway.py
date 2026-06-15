@@ -527,7 +527,7 @@ async def _proxy_to_llm(
             max_tokens=200,
         )
     except Exception as e:
-        logger.warning("[gateway] Utility task LLM call failed: %s", e)
+        logger.warning("[gateway] Utility task LLM call failed: %r", e)
         result = ""
 
     completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
@@ -588,7 +588,8 @@ async def _resolve_model(workspace: str) -> tuple[dict, str, str]:
     Priority:
       1. Gateway model selected in Settings > Gateway
       2. Workspace-specific model override (.cptr/model)
-      3. First enabled connection's first model
+      3. Default model from Settings > Models (chat.default_model)
+      4. First enabled connection's first model (with auto-discovery)
 
     Returns (connection_dict, bare_model, full_model_id).
     """
@@ -621,12 +622,29 @@ async def _resolve_model(workspace: str) -> tuple[dict, str, str]:
                 model_override,
             )
 
+    # Try the default model (set in Settings > Models)
+    default_model = await Config.get("chat.default_model")
+    if isinstance(default_model, str) and default_model.strip():
+        try:
+            connection, bare = await _resolve_connection(default_model.strip())
+            return connection, bare, default_model.strip()
+        except Exception:
+            logger.warning(
+                "[openai-compat] Default model '%s' not found, falling back",
+                default_model,
+            )
+
     # Fall back to the first enabled connection + its first model
+    from cptr.routers.chat import _fetch_provider_models
+
     connections = await Config.get("chat.connections") or []
     for conn in connections:
         if not conn.get("enabled", True):
             continue
         model_ids = conn.get("data", {}).get("models")
+        if not model_ids:
+            # Attempt auto-discovery if models aren't pre-stored
+            model_ids = await _fetch_provider_models(conn)
         if model_ids:
             prefix = (conn.get("prefix_id") or "").strip()
             bare = model_ids[0]

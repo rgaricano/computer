@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-06-15
+
+### Added
+
+- 🎯 **Default model.** Pick a default model from Settings › Models. New chats and gateway requests will use it automatically instead of whichever model happens to be first in the list.
+
+### Changed
+
+- 🔄 **Smarter gateway model selection.** The gateway now respects your default model setting before falling back, and can auto-discover available models from providers that don't have a pre-configured list.
+
 ## [0.4.5] - 2026-06-15
 
 ### Fixed
