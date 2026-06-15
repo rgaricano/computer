@@ -685,7 +685,7 @@
 
 							<!-- File list -->
 							<div class="flex-1 overflow-y-auto">
-								{#each gitStatus?.files ?? [] as file (file.path)}
+								{#each gitStatus?.files ?? [] as file (`${file.path}:${file.staged}`)}
 									{@const fp = fPath(file.path)}
 									{@const sc = statusChar(file.status)}
 									<button
