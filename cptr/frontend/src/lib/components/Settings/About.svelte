@@ -1,6 +1,32 @@
 <script lang="ts">
 	import { t } from '$lib/i18n';
 	import { appVersion, showChangelog, updateAvailable, latestVersion } from '$lib/stores';
+
+	const REPO_URL = 'https://github.com/open-webui/computer';
+	const SHARE_TEXT = 'Check out cptr. Your computer, from anywhere.';
+
+	const shareLinks = [
+		{
+			label: 'X',
+			href: `https://x.com/intent/tweet?text=${encodeURIComponent(SHARE_TEXT)}&url=${encodeURIComponent(REPO_URL)}`
+		},
+		{
+			label: 'Reddit',
+			href: `https://reddit.com/submit?url=${encodeURIComponent(REPO_URL)}&title=${encodeURIComponent(SHARE_TEXT)}`
+		},
+		{
+			label: 'LinkedIn',
+			href: `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(REPO_URL)}`
+		}
+	];
+
+	let copied = $state(false);
+
+	function copyLink() {
+		navigator.clipboard.writeText(REPO_URL);
+		copied = true;
+		setTimeout(() => (copied = false), 2000);
+	}
 </script>
 
 <h2 class="text-sm font-medium text-gray-900 dark:text-white mb-4">
@@ -52,7 +78,30 @@
 	</p>
 </div>
 
-<p class="text-[11px] text-gray-300 dark:text-gray-700 pt-8">
+<div class="flex items-center gap-1.5 pt-6">
+	<span class="text-[11px] text-gray-400 dark:text-gray-600 mr-1">{$t('about.share')}</span>
+	{#each shareLinks as link, i}
+		{#if i > 0}
+			<span class="text-[11px] text-gray-200 dark:text-gray-700">·</span>
+		{/if}
+		<a
+			href={link.href}
+			target="_blank"
+			rel="noopener noreferrer"
+			class="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-500 transition-colors"
+			>{link.label}</a
+		>
+	{/each}
+	<span class="text-[11px] text-gray-200 dark:text-gray-700">·</span>
+	<button
+		onclick={copyLink}
+		class="text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-500 transition-colors cursor-pointer"
+	>
+		{copied ? $t('about.copied') : $t('about.copyLink')}
+	</button>
+</div>
+
+<p class="text-[11px] text-gray-300 dark:text-gray-700 pt-4">
 	{$t('about.createdBy')}
 </p>
 

@@ -377,6 +377,9 @@
 	"about.licenseName": "Open Use License",
 	"about.copyright": "Copyright © 2026 Open WebUI Inc. All rights reserved.",
 	"about.updateAvailable": "v{{version}} available",
+	"about.share": "Share",
+	"about.copyLink": "Copy link",
+	"about.copied": "Copied!",
 
 	"automations.title": "Automations",
 	"automations.filter": "Filter...",
