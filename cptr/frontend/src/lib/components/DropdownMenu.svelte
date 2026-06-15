@@ -62,8 +62,35 @@
 	let menuMaxHeight = $state<number | undefined>();
 	let ready = $state(false);
 	let frame: number | undefined;
+	let anchorFrame: number | undefined;
 	let settleTimers: number[] = [];
 	let lastViewportState = '';
+	let lastAnchorState = '';
+
+	function portal(node: HTMLElement, enabled = true) {
+		const parent = node.parentNode;
+		const sibling = node.nextSibling;
+
+		function move() {
+			if (enabled && node.parentNode !== document.body) {
+				document.body.appendChild(node);
+			} else if (!enabled && parent && node.parentNode === document.body) {
+				parent.insertBefore(node, sibling);
+			}
+		}
+
+		move();
+
+		return {
+			update(nextEnabled: boolean) {
+				enabled = nextEnabled;
+				move();
+			},
+			destroy() {
+				node.remove();
+			}
+		};
+	}
 
 	function visualViewportRect() {
 		const vv = window.visualViewport;
@@ -85,6 +112,25 @@
 			window.innerWidth,
 			window.innerHeight
 		].join(':');
+	}
+
+	function anchorState() {
+		if (!(anchor instanceof HTMLElement)) {
+			return `${anchor.x}:${anchor.y}:${viewportState()}`;
+		}
+
+		const rect = anchor.getBoundingClientRect();
+		return [
+			rect.left,
+			rect.top,
+			rect.right,
+			rect.bottom,
+			rect.width,
+			rect.height,
+			viewportState()
+		]
+			.map((value) => (typeof value === 'number' ? value.toFixed(2) : value))
+			.join(':');
 	}
 
 	function measureMenu() {
@@ -204,12 +250,23 @@
 		}
 	}
 
+	function trackAnchor() {
+		const nextAnchorState = anchorState();
+		if (nextAnchorState !== lastAnchorState) {
+			lastAnchorState = nextAnchorState;
+			updatePosition();
+		}
+		anchorFrame = requestAnimationFrame(trackAnchor);
+	}
+
 	onMount(() => {
 		let dvhProbe: HTMLDivElement | undefined;
 		let dvhObserver: ResizeObserver | undefined;
 
 		lastViewportState = viewportState();
+		lastAnchorState = anchorState();
 		scheduleUpdate();
+		anchorFrame = requestAnimationFrame(trackAnchor);
 
 		// Follow anchor on scroll/resize
 		window.addEventListener('scroll', scheduleUpdate, true);
@@ -235,6 +292,7 @@
 
 		return () => {
 			if (frame != null) cancelAnimationFrame(frame);
+			if (anchorFrame != null) cancelAnimationFrame(anchorFrame);
 			for (const timer of settleTimers) window.clearTimeout(timer);
 			dvhObserver?.disconnect();
 			dvhProbe?.remove();
@@ -254,7 +312,8 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-	class="fixed inset-0 z-[100]"
+	use:portal={!inlineAbove}
+	class="fixed inset-0 z-[1000]"
 	onclick={onclose}
 	oncontextmenu={(e) => {
 		e.preventDefault();
@@ -264,10 +323,11 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+	use:portal={!inlineAbove}
 	bind:this={menuEl}
 	class="{inlineAbove
 		? `absolute bottom-full mb-1 ${align === 'end' ? 'right-0' : 'left-0'}`
-		: 'fixed'} z-[101] min-w-36 rounded-xl bg-white dark:bg-[#1a1a1a] border border-gray-150 dark:border-white/6 shadow-xl p-0.5 flex flex-col overflow-hidden {className}"
+		: 'fixed'} z-[1001] min-w-36 rounded-xl bg-white dark:bg-[#1a1a1a] border border-gray-150 dark:border-white/6 shadow-xl p-0.5 flex flex-col overflow-hidden {className}"
 	style="{inlineAbove
 		? ''
 		: `left: ${pos.x}px; top: ${pos.top}px; ${menuMaxHeight

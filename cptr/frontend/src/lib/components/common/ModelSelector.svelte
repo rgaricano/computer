@@ -65,7 +65,7 @@
 	}
 </script>
 
-<span class="relative inline-flex">
+<span class="relative inline-flex {open ? 'z-[1001]' : ''}">
 	<button
 		bind:this={btnEl}
 		class="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors duration-100"
@@ -98,7 +98,6 @@
 			onclose={() => (open = false)}
 			preferAbove={preferAbove}
 			forceAbove={preferAbove}
-			inlineAbove={preferAbove}
 			maxHeight={selectorMaxHeight}
 			className="w-48"
 			align={align}
