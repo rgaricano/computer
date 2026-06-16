@@ -646,5 +646,15 @@ async def verify_tool_server(server_id: str, request: Request):
             tools = convert_openapi_to_tool_specs(spec)
             return {"ok": True, "tools": tools}
 
+    except ModuleNotFoundError as e:
+        if e.name == "mcp":
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "message": "MCP support is not installed. Run: pip install 'cptr[mcp]'",
+                },
+                400,
+            )
+        return JSONResponse({"ok": False, "message": str(e)}, 400)
     except Exception as e:
         return JSONResponse({"ok": False, "message": str(e)}, 400)

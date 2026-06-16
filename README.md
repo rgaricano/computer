@@ -25,6 +25,10 @@ pip install cptr
 cptr run
 ```
 
+MCP tool servers require the optional MCP dependencies: `pip install 'cptr[mcp]'`.
+To install every optional feature group, use `pip install 'cptr[all]'`.
+The Docker image includes all optional feature groups.
+
 Or with [uv](https://docs.astral.sh/uv/): `uvx cptr@latest run`
 
 Opens in your browser at `http://localhost:8000`.
