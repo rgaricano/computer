@@ -4,6 +4,8 @@
 	import MarkdownRenderer from '$lib/components/markdown/MarkdownRenderer.svelte';
 	import OutputEditView from './OutputEditView.svelte';
 	import ConsecutiveActivityGroup from './ConsecutiveActivityGroup.svelte';
+	import ReasoningCollapsible from './ReasoningCollapsible.svelte';
+	import ToolCallCollapsible from './ToolCallCollapsible.svelte';
 	import { currentWorkspace, openFileTab } from '$lib/stores';
 	import { t } from '$lib/i18n';
 
@@ -394,18 +396,35 @@
 							</div>
 						</button>
 					{:else if displayItem.type === 'activity_group'}
-						<ConsecutiveActivityGroup
-							entries={displayItem.entries}
-							calls={displayItem.calls}
-							reasoning={displayItem.reasoning}
-							outputs={displayItem.outputs}
-							{done}
-							{chatId}
-							{messageId}
-							{groupIdx}
-							{toolLabel}
-							{onapprove}
-						/>
+						{#if displayItem.entries.length === 1}
+							{@const item = displayItem.entries[0]}
+							{#if item.type === 'reasoning'}
+								<ReasoningCollapsible {item} fallbackId={`reasoning-${groupIdx}-0`} />
+							{:else}
+								<ToolCallCollapsible
+									{item}
+									pairedOutput={displayItem.outputs.get(item.call_id)}
+									{done}
+									{chatId}
+									{messageId}
+									{toolLabel}
+									{onapprove}
+								/>
+							{/if}
+						{:else}
+							<ConsecutiveActivityGroup
+								entries={displayItem.entries}
+								calls={displayItem.calls}
+								reasoning={displayItem.reasoning}
+								outputs={displayItem.outputs}
+								{done}
+								{chatId}
+								{messageId}
+								{groupIdx}
+								{toolLabel}
+								{onapprove}
+							/>
+						{/if}
 					{/if}
 				{/each}
 				{#if done && unrenderedContent && displayItems.length > 0}
