@@ -68,7 +68,32 @@ async def status(root: str) -> dict[str, Any]:
     ahead = 0
     behind = 0
     has_ab = False
-    files: list[dict] = []
+    files_by_path: dict[str, dict[str, Any]] = {}
+
+    def add_file(
+        path: str,
+        status_text: str,
+        *,
+        staged: bool = False,
+        unstaged: bool = False,
+    ) -> None:
+        entry = files_by_path.setdefault(
+            path,
+            {
+                "path": path,
+                "status": status_text,
+                "staged": False,
+                "unstaged": False,
+            },
+        )
+        if staged:
+            entry["staged"] = True
+            entry["staged_status"] = status_text
+        if unstaged:
+            entry["unstaged"] = True
+            entry["unstaged_status"] = status_text
+        # Prefer the working-tree status for the row label when both sides exist.
+        entry["status"] = status_text
 
     for line in out.splitlines():
         if line.startswith("# branch.head "):
@@ -94,30 +119,18 @@ async def status(root: str) -> dict[str, Any]:
             staged_code = xy[0]
             unstaged_code = xy[1]
             if staged_code != ".":
-                files.append(
-                    {
-                        "path": path,
-                        "status": _status_char(staged_code),
-                        "staged": True,
-                    }
-                )
+                add_file(path, _status_char(staged_code), staged=True)
             if unstaged_code != ".":
-                files.append(
-                    {
-                        "path": path,
-                        "status": _status_char(unstaged_code),
-                        "staged": False,
-                    }
-                )
+                add_file(path, _status_char(unstaged_code), unstaged=True)
         elif line.startswith("? "):
             # Untracked
             path = line[2:]
-            files.append({"path": path, "status": "untracked", "staged": False})
+            add_file(path, "untracked", unstaged=True)
         elif line.startswith("u "):
             # Unmerged
             parts = line.split(" ", 10)
             path = parts[-1]
-            files.append({"path": path, "status": "conflict", "staged": False})
+            add_file(path, "conflict", unstaged=True)
 
     # upstream is set but remote branch doesn't exist yet (no ab line)
     # — treat as unpublished so the frontend shows "Publish"
@@ -136,7 +149,7 @@ async def status(root: str) -> dict[str, Any]:
         "remote_url": remote_url,
         "ahead": ahead,
         "behind": behind,
-        "files": files,
+        "files": list(files_by_path.values()),
     }
 
 
@@ -472,6 +485,11 @@ async def delete_branch(root: str, name: str) -> None:
     await _run("branch", "-d", name, cwd=root)
 
 
+async def rename_branch(root: str, old_name: str, new_name: str) -> None:
+    """Rename a local branch."""
+    await _run("branch", "-m", old_name, new_name, cwd=root)
+
+
 async def pull(root: str) -> dict[str, Any]:
     """Pull from remote."""
     code, out, err = await _run("pull", cwd=root, check=False)
@@ -539,7 +557,7 @@ async def stash_list(root: str) -> list[dict[str, str]]:
 
 async def stash_save(root: str, message: str | None = None) -> dict[str, Any]:
     """Stash changes."""
-    args = ["stash", "push"]
+    args = ["stash", "push", "--include-untracked"]
     if message:
         args.extend(["-m", message])
     code, out, err = await _run(*args, cwd=root, check=False)

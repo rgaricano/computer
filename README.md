@@ -16,7 +16,7 @@
 
 `cptr` (short for "computer") runs on your machine and serves your whole computer (files, terminal, editor, git) to any browser. It literally is your computer.
 
-Phone, tablet, laptop, another computer, even the one it's running on. Designed to feel native on every screen. Plug in an AI that can actually read, write, and run things on your machine, or bring your favourite terminal agent. Terminal multiplexer, parallel AI agents, full workstation, one tool, any device.
+Use it from your phone, tablet, laptop, another computer, or the machine it's running on. Designed to feel native on every screen. Plug in an AI that can actually read, write, and run things on your machine, or bring your favourite terminal agent. Terminal multiplexer, parallel AI agents, full workstation, one tool, any device.
 
 ## Install
 
@@ -24,6 +24,10 @@ Phone, tablet, laptop, another computer, even the one it's running on. Designed 
 pip install cptr
 cptr run
 ```
+
+MCP tool servers require the optional MCP dependencies: `pip install 'cptr[mcp]'`.
+To install every optional feature group, use `pip install 'cptr[all]'`.
+The Docker image includes all optional feature groups.
 
 Or with [uv](https://docs.astral.sh/uv/): `uvx cptr@latest run`
 

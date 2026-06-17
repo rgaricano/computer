@@ -45,6 +45,9 @@ export const getGitShow = (root: string, ref: string) =>
 export const getGitBranches = (root: string) =>
 	fetchJSON(`/api/git/branches?root=${encodeURIComponent(root)}`);
 
+export const getGitStashes = (root: string) =>
+	fetchJSON(`/api/git/stashes?root=${encodeURIComponent(root)}`);
+
 export const stageFiles = (root: string, files: string[]) =>
 	fetchJSON('/api/git/stage', jsonBody({ root, files }));
 
@@ -72,8 +75,28 @@ export const gitPush = (
 
 export const gitUncommit = (root: string) => fetchJSON('/api/git/uncommit', jsonBody({ root }));
 
+export const gitStash = (root: string, message?: string) =>
+	fetchJSON('/api/git/stash', jsonBody({ root, message }));
+
+export const gitUnstash = (root: string, index = 0) =>
+	fetchJSON('/api/git/unstash', jsonBody({ root, index }));
+
 export const createGitBranch = (root: string, name: string) =>
 	fetchJSON('/api/git/branch', jsonBody({ root, name }));
+
+export const renameGitBranch = (root: string, old_name: string, new_name: string) =>
+	fetchJSON('/api/git/branch', {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ root, old_name, new_name })
+	});
+
+export const deleteGitBranch = (root: string, name: string) =>
+	fetchJSON('/api/git/branch', {
+		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ root, name })
+	});
 
 export const checkoutBranch = (root: string, branch: string) =>
 	fetchJSON('/api/git/checkout', jsonBody({ root, branch }));

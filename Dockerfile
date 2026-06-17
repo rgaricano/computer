@@ -43,7 +43,8 @@ WORKDIR /home/cptr
 # Install the wheel into an isolated venv
 COPY --chown=cptr:cptr --from=backend-builder /dist/*.whl /tmp/
 RUN uv venv /home/cptr/.venv && \
-    uv pip install --python /home/cptr/.venv/bin/python /tmp/*.whl && \
+    set -- /tmp/*.whl && \
+    uv pip install --python /home/cptr/.venv/bin/python "$1[all]" && \
     rm /tmp/*.whl
 
 ENV PATH="/home/cptr/.venv/bin:$PATH"

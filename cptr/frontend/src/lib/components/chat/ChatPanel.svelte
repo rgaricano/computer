@@ -38,6 +38,7 @@
 		ttsConfigured,
 		ttsFormat,
 		setTtsAudioPlaybackSource,
+		ttsAutoStreamEnabled,
 		ttsPlaybackEnabled,
 		ttsVoice,
 		unlockTtsAudioPlayback,
@@ -511,7 +512,10 @@
 			voiceModeEnabled.set(false);
 			ttsPlaybackEnabled.set(false);
 			stopTtsPlayback();
-		} else if ((!$ttsPlaybackEnabled && !$voiceModeEnabled) || !$ttsConfigured) {
+		} else if (
+			(!$ttsPlaybackEnabled && !$voiceModeEnabled && !$ttsAutoStreamEnabled) ||
+			!$ttsConfigured
+		) {
 			stopTtsPlayback();
 		}
 	});
@@ -598,6 +602,7 @@
 		if (!text || !selectedModel) return;
 		if (sending) return;
 		stopTtsPlayback();
+		if (shouldStreamTts()) void unlockTtsAudioPlayback();
 		sending = true;
 		const files = chatInputEl?.getFiles() ?? [];
 		// Transform TipTap mention format to markdown file links
@@ -949,7 +954,15 @@
 	}
 
 	function shouldUseTts() {
-		return $ttsEnabled && $ttsConfigured && ($ttsPlaybackEnabled || $voiceModeEnabled);
+		return (
+			$ttsEnabled &&
+			$ttsConfigured &&
+			($ttsPlaybackEnabled || $voiceModeEnabled || $ttsAutoStreamEnabled)
+		);
+	}
+
+	function shouldStreamTts() {
+		return $ttsEnabled && $ttsConfigured && ($voiceModeEnabled || $ttsAutoStreamEnabled);
 	}
 
 	function resetTtsBuffer() {
@@ -1023,7 +1036,7 @@
 	}
 
 	function handleTtsDelta(messageId: string, delta: string) {
-		if (!shouldUseTts()) return;
+		if (!shouldStreamTts()) return;
 		if (!delta.trim()) return;
 
 		const active = allMessages.find((m) => m.id === messageId);
@@ -1043,7 +1056,7 @@
 	}
 
 	function flushTtsBuffer() {
-		if (!shouldUseTts()) return;
+		if (!shouldStreamTts()) return;
 		const chunk = cleanSpeechText(ttsBuffer);
 		resetTtsBuffer();
 		if (chunk.length > 1) enqueueSpeech(chunk);
@@ -1242,6 +1255,7 @@
 			if (generation === ttsGeneration) ttsPlaying = false;
 			if (generation === ttsGeneration) speakingMessageId = null;
 			if (generation === ttsGeneration) ttsStopRequested = false;
+			if (generation === ttsGeneration && !$voiceModeEnabled) ttsPlaybackEnabled.set(false);
 		}
 	}
 </script>

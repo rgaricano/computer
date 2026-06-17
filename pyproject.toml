@@ -1,6 +1,6 @@
 [project]
 name = "cptr"
-version = "0.5.2"
+version = "0.5.3"
 description = "Your computer, from anywhere. Code, manage, and control your machine from the web."
 license = {file = "LICENSE"}
 readme = "README.md"
@@ -27,6 +27,13 @@ dependencies = [
 pam = ["python-pam>=2.0"]
 mcp = ["mcp>=1.8"]
 docs = ["pypdf>=4.0", "python-docx>=1.0", "openpyxl>=3.1"]
+all = [
+    "mcp>=1.8",
+    "pypdf>=4.0",
+    "python-docx>=1.0",
+    "openpyxl>=3.1",
+    "python-pam>=2.0",
+]
 
 [dependency-groups]
 dev = [

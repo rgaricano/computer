@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-06-17
+
+### Added
+
+- 🔊 **Auto-stream TTS.** New toggle in Audio settings that automatically reads AI responses aloud as they stream in, without needing to manually enable playback each time.
+- 🔀 **Branch management.** You can now rename and delete branches directly from the Git panel. Right-click (or tap the action button) on any branch to see your options.
+- 🔍 **Branch search.** The branch picker now has a search bar so you can quickly find branches in large repos.
+- 💾 **Stash awareness when switching branches.** If you have uncommitted changes and try to switch or create a branch, you'll be asked whether to bring the changes along or leave them behind.
+
+### Fixed
+
+- 🧩 **MCP tool server errors are now helpful.** If the MCP package isn't installed, you'll get a clear message telling you how to install it instead of a confusing traceback.
+- 🔧 **AI tool calls no longer break on empty arrays.** Fixed a subtle issue where providers returning empty tool call lists could cause errors during streaming.
+- 🗂️ **Git file list no longer shows duplicates.** Files that were both staged and modified used to appear twice in the changed files list. They now show as a single entry with the correct status.
+
+### Changed
+
+- 📋 **Dropdown menus support action buttons.** Menu items can now have a secondary action icon on the right side, used for things like branch context menus.
+- 📂 **Home page lists are trimmed.** The recent files and folder suggestions on the welcome screen now show at most 5 items each to keep things tidy.
+- 📦 **Added an "all" install extra.** You can now `pip install cptr[all]` to get every optional dependency (MCP, document support, PAM) in one go.
+- 🔊 **Sticky save button in Audio settings.** The save button in Audio settings now stays visible at the bottom of the panel as you scroll.
+- 💾 **Stash includes untracked files.** When stashing changes, new files that haven't been committed yet are now included automatically.
+
 ## [0.5.2] - 2026-06-16
 
 ### Fixed

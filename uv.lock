@@ -265,7 +265,7 @@ wheels = [
 
 [[package]]
 name = "cptr"
-version = "0.4.10"
+version = "0.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
@@ -286,6 +286,13 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "mcp" },
+    { name = "openpyxl" },
+    { name = "pypdf" },
+    { name = "python-docx" },
+    { name = "python-pam" },
+]
 docs = [
     { name = "openpyxl" },
     { name = "pypdf" },
@@ -313,12 +320,17 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.128.8" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "loguru", specifier = ">=0.7.3" },
+    { name = "mcp", marker = "extra == 'all'", specifier = ">=1.8" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.8" },
+    { name = "openpyxl", marker = "extra == 'all'", specifier = ">=3.1" },
     { name = "openpyxl", marker = "extra == 'docs'", specifier = ">=3.1" },
     { name = "pyjwt", specifier = ">=2.8" },
+    { name = "pypdf", marker = "extra == 'all'", specifier = ">=4.0" },
     { name = "pypdf", marker = "extra == 'docs'", specifier = ">=4.0" },
     { name = "python-dateutil", specifier = ">=2.8" },
+    { name = "python-docx", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "python-docx", marker = "extra == 'docs'", specifier = ">=1.0" },
+    { name = "python-pam", marker = "extra == 'all'", specifier = ">=2.0" },
     { name = "python-pam", marker = "extra == 'pam'", specifier = ">=2.0" },
     { name = "python-socketio", extras = ["asgi"], specifier = ">=5.11" },
     { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = ">=2.0" },

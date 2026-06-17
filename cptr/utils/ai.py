@@ -448,7 +448,7 @@ def _to_openai_messages(messages: list[dict], instructions: str) -> list[dict]:
                 if rc:
                     out["reasoning_content"] = rc
             # Clean tool_calls: remove fc_id which is Responses-API-only
-            if "tool_calls" in out:
+            if out.get("tool_calls"):
                 out["tool_calls"] = [
                     {k: v for k, v in tc.items() if k != "fc_id"} for tc in out["tool_calls"]
                 ]
@@ -554,7 +554,7 @@ async def stream_openai_completions(
                                 emitted = True
                                 yield {"type": "output", "item": item}
 
-                        for tc in delta.get("tool_calls", []):
+                        for tc in delta.get("tool_calls") or []:
                             idx = tc["index"]
                             if idx not in tool_calls:
                                 tool_calls[idx] = {
