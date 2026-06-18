@@ -1,116 +1,202 @@
 # Manifesto
 
-> **TL;DR** We pushed code and went to dinner. Prod broke. Phone in pocket, laptop at home. So we built `cptr` for ourselves. Your machine, in any browser. Files, terminal, editor, git, all of it. Phone, tablet, laptop, whatever. It literally is your computer. Now go outside.
+> **TL;DR** We pushed code and went to dinner. Prod broke. Phone in pocket, laptop at home. The fix was on our computer, not in some fresh cloud box. So we built `cptr`: your actual machine, in any browser. Files, terminal, editor, git, running sessions, all of it. Phone, tablet, laptop, whatever. It literally is your computer. Now go outside.
 
-A developer moves to Portugal for the light. She works remotely for a company in New York. The commute is gone. The office is gone. Her apartment has a terrace with bougainvillea and a view of the Tagus. She sits at a desk in a dark room for eight hours and sees the river between pull requests.
+Your computer is where your work lives.
 
-A father works from home. His daughter is three. He is present in the house for every hour she is awake. He is available for almost none of them. "Working from home" means a closed door, a lit screen, and a posture that says: not now. She learns early that he is home but not here. Remote work promised presence. It delivered proximity.
+Not in the abstract. Literally.
 
-A freelancer flies to Bali. The laptop comes out at a beach bar. The glare makes the screen unreadable. She moves to the shade, then to a cafe, then to an air-conditioned room with the curtains drawn. The beach was the point. The room is where the work happens. Every time.
+The repo you already cloned. The branch you forgot was still dirty. The terminal that is still running. The `.env` file you made three months ago and never want to recreate. The local database with the weird test state. The SSH key, the shell history, the editor tabs, the scripts that only work because your machine has slowly become your machine.
 
-These are not failures of discipline. These are consequences of design. The tools dictate the posture. The posture dictates the location. The location dictates what the life looks like. To understand why, it helps to understand how the desk became the default in the first place.
+That is the computer you trust.
 
-## The inheritance
+And yet the moment you step away from the desk, most tools ask you to leave it behind.
 
-Nobody chose the desk. It was inherited.
+Open a cloud development environment. Start a new workspace. Wait for it to build. Reconnect accounts. Reinstall packages. Copy secrets. Recreate the thing you already had. It is useful. Sometimes it is exactly right. But it is not your computer. It is another place to work.
 
-The first computers filled rooms. To use one, you went to it. When computers became personal, they became furniture. The PC sat on a desk because it weighed thirty pounds, drew power from a wall outlet, and connected to peripherals by cable. The desk was a physical requirement. Then laptops arrived, and the requirement became optional, but the habit did not change. The laptop was carried to a new desk. The coffee shop desk, the kitchen desk, the coworking desk. The posture remained. The human goes to the computer, opens it, sits down, begins.
+Most of the time, you do not want another place to work.
 
-The phone freed everything else. Communication, commerce, entertainment, education, banking, navigation. Every domain of modern life moved into the pocket. But development stayed at the desk, and for a long time, this was justified.
+You want the place where the work already is.
 
-Writing code was typing-intensive work. It required rapid navigation across files, simultaneous visibility of multiple contexts, and sustained keyboard input. A six-inch screen and a touch keyboard were genuinely insufficient. The phone could not do the work because the work was production, and production demanded the apparatus: the large screen, the mechanical keyboard, the multiple panes, the fixed posture. The desk was not arbitrary. It was earned.
+## The Small Interruptions
 
-But the nature of the work is no longer the same.
+The hard parts of work still deserve the desk. Big refactors. Deep debugging. Four panes of context. A real keyboard. A quiet hour.
 
-## The shift
+But a lot of the day is not that.
 
-Software development has been, for its entire history, a high-input activity. Thousands of keystrokes to produce a single feature. Hundreds of lines written by hand, character by character, requiring constant visual scanning across multiple files. The ratio of human effort to machine output was enormous. Every feature was assembled manually from syntax and logic, and the speed of production was limited by the speed of the human's hands on a keyboard.
+A build finishes while you are making coffee. A deploy fails while you are on the couch. A customer reports a bug while you are on the train. An agent finishes a task while you are walking outside. You do not need to "go to work" for that. You need to look at the output, read the diff, check the logs, maybe type one sentence, maybe press the button.
 
-Artificial intelligence has inverted this ratio. A developer can now describe intent in a sentence and receive hundreds of lines of working code in return. The bottleneck has moved from production speed to judgment quality. The question is no longer "how fast can you type" but "can you evaluate what came back." The input bandwidth required from the human has dropped by orders of magnitude. The cognitive demand has not decreased. It has changed in kind.
+The task takes thirty seconds.
 
-This is a structural transformation in how software is made. The development loop itself has become asynchronous. A developer describes what they need. The AI produces it. The developer returns to review the result. This is unlike the old model, where every line required the developer's fingers on the keyboard in real time. In the new model, the developer does not need to be seated while the work is being produced. They need to be available when it is time to evaluate. That is a notification, not a posture.
+The laptop turns it into a ritual.
 
-The most valuable developer skill is shifting from the ability to produce code quickly to the ability to evaluate code accurately and articulate intent clearly. These are thinking skills. They benefit from movement, from stepping away, from a change of environment, from a clear head. The desk was optimized for typing speed. The new work is optimized for clarity of thought.
+Find the machine. Open the lid. Wait for the network. Unlock it. Find the window. Remember where you were. Sit down even though you were only trying to check whether CI passed.
 
-This is not speculative. It is measurable. Companies are restructuring engineering teams around AI-assisted workflows. The percentage of AI-generated code in production codebases is tracked and growing. GitHub reports that Copilot generates nearly half of all code in files where it is enabled. Entire startups are built with engineering teams a fraction of the size that would have been required five years ago. The trend is not ambiguous.
+The work was small. The interface made it large.
 
-And the trend only moves in one direction. Every improvement in AI reduces the amount of manual input required from the developer. Every new model that writes better code, understands larger codebases, and makes fewer mistakes shifts the human role further from production toward judgment. The phone is sufficient for much of the work today. It will be sufficient for more of it tomorrow. This is not a bet against the current state of AI. It is a bet on the momentum of AI. The better AI gets, the less reason there is to be tethered to a desk.
+## The Desk
 
-## The computer, not the chat
+Nobody chose the desk forever. We inherited it.
 
-But AI alone is not enough. AI does not replace the computer. It runs on the computer.
+The first computers filled rooms, so people went to the computer. Then computers became personal, but they were still furniture: tower, monitor, keyboard, mouse, cables, power. The desk made sense because the machine lived there.
 
-The AI writes code, but the code lands in a filesystem. The filesystem has structure, history, and dependencies. The code must be built, and the build produces output. The output must be tested, and the tests produce results. The results must be deployed, and the deployment produces logs. At every stage, the ground truth is on the machine. A chat interface shows what the AI generated. The computer shows what actually happened.
+Laptops made the desk portable, but they did not change the basic deal. You still open the computer, face the screen, put both hands on the keyboard, and disappear for a while. The desk became the coffee shop table, the kitchen table, the coworking bench, the hotel desk. Different furniture, same posture.
 
-Evaluating AI-generated code is not reading a chat log. It is reviewing a diff in the context of the files around it. It is checking whether the tests pass. It is looking at the terminal output. It is seeing the git history. It is navigating the filesystem to understand what changed and why. The AI is a collaborator. The computer is the workspace. Judgment requires access to the workspace, not just the collaborator.
+That posture used to match the work.
 
-This is why the answer is not a better chat app on the phone. The answer is the phone reaching the computer itself. The whole computer. Files, terminal, editor, git, and yes, AI too, as part of the environment it already runs in. Not a feature list. Just the machine, accessible from the pocket.
+Writing software meant typing everything by hand. The machine waited for you. Every line came through your fingers. A small screen and a touch keyboard were not enough, because production demanded the whole setup: big display, fast keyboard, many files, many panes.
 
-## The choice
+The desk was not arbitrary. It was earned.
 
-This is not an argument against the desk. Deep focus work benefits from a large screen, multiple panes of context, sustained uninterrupted attention. The desk is excellent for that, and nothing here suggests otherwise.
+But the work has changed.
 
-The argument is against the desk being mandatory.
+## The Work Changed
 
-Right now, every interaction with the computer requires the desk. Checking a build, reviewing a diff, approving a commit, reading a log, pushing a fix. All of it requires sitting down at the machine. The desk is currently the only way to reach your own computer. The question is not whether the desk is useful. It is whether it should be the only option.
+AI did not remove the computer. It changed what you need from it.
 
-Reviewing a complex change across twenty files on a phone sounds impractical. But it sounds impractical because it has been impractical, and it has been impractical because no one has built a good interface for it. Every mobile development tool to date has been a desktop interface compressed into a smaller screen. That is not a test of whether the phone can do the work. It is a test of whether a desktop layout survives being shrunk. It never does. The conclusion that phones are insufficient for serious code review is based entirely on experiences with interfaces that were not designed for the phone. It is the same conclusion people reached about mobile email before the iPhone, about mobile banking before good banking apps, about mobile photography before computational cameras. The screen was always capable. The interface was not.
+More and more, the loop is: describe the change, wait, review, test, adjust, approve. The bottleneck is less often "can I type this fast enough?" and more often "can I tell whether this is right?"
 
-## The cost of no choice
+That is still serious work. It may be more serious. Bad judgment ships bad software faster than ever.
 
-Over a forty-year career, at eight hours a day and two hundred fifty working days a year, a knowledge worker spends eighty thousand hours in a chair. That is more time than most people will spend with their children before those children leave home. More time than most couples will spend in the same room, awake, across an entire marriage. It is the largest single allocation of waking life that a modern knowledge worker will make.
+But judgment does not always require the full desk ritual. Sometimes it requires the actual diff. The terminal output. The failing test. The log line. The file next to the file that changed. The git state on the machine where the change was made.
 
-Not all of those hours need to be at the desk. Some work demands deep focus, multiple contexts, sustained concentration. That work belongs at the desk. But a significant portion of the day is not deep focus. It is checking whether a build passed. It is reviewing a pull request. It is reading a log. It is approving a deploy. It is the connective tissue between the deep work. Right now, all of it requires the chair, because the chair is the only way to reach the machine.
+Chat alone is not enough.
 
-The cost is not one thing. It is everything else. A parent behind a closed door for the hours the child is awake, including the hours that could have been flexible. A couple in the same house who see each other at the margins of the day. A person who moved somewhere beautiful and sees it through a window. The hours between nine and five are the hours when the sun is out, when the people you love are available, when the world is alive. Many of those hours go to the chair not because the work demands it, but because the tool does.
+The AI can suggest. The chat can explain. But the truth is on the computer.
 
-And the chair takes more than time.
+Did the tests pass? What changed? Which files are dirty? What does the app do when it runs? What branch am I on? What did that command print? What is actually in the folder?
 
-## The body
+Those answers live in the workspace. Not the idea of a workspace. Your workspace.
 
-The human body is not designed to be still. It is designed to move. The medical literature on this is not ambiguous.
+## Your Computer, Not Someone Else's Instance
 
-A 2015 meta-analysis in the Annals of Internal Medicine, covering 47 studies, found that prolonged sedentary time is independently associated with increased risk of type 2 diabetes, cardiovascular disease, cancer, and all-cause mortality, even after adjusting for physical activity [1]. Sitting does damage that exercise does not fully undo. A 2016 meta-analysis in The Lancet, covering over one million people, found that those sitting eight or more hours per day needed 60 to 75 minutes of daily moderate-intensity physical activity to offset the elevated mortality risk [2]. Most people do not get 60 to 75 minutes. Recent research shows a roughly 3 percent increase in all-cause mortality risk for each additional hour of daily sedentary time, with those exceeding eleven hours per day facing 30 to 48 percent higher mortality compared to the least sedentary [3].
+The cloud solved a real problem: access.
 
-The developer who eats well, sleeps eight hours, and exercises before work will still spend the core of the day doing the one thing the research says not to do: sitting motionless for hours without interruption. Not because the work demands stillness. Because the interface does.
+Put the machine somewhere else and you can reach it from anywhere. That is powerful. For teams, classrooms, disposable environments, and locked-down workflows, it can be the right answer.
 
-A healthier body also produces better work. A 2025 systematic umbrella review in the British Journal of Sports Medicine, synthesizing 133 prior systematic reviews, confirmed that exercise significantly improves general cognition, memory, and executive function across all age groups [4].
+But it also changes the relationship. The machine is no longer the one under your desk. The state is somewhere else. The uptime is someone else's. The storage is someone else's. The pricing is someone else's. The environment is something you provision, not something you own.
 
-These are not incidental benefits. They are the exact cognitive capacities that the AI shift demands. The new work is evaluation, pattern recognition, architectural thinking, and the ability to articulate intent precisely. Every one of these improves with physical activity and degrades with prolonged stillness.
+For a lot of work, that tradeoff is strange.
 
-The desk was built for the old work. Movement is better suited to the new work. A 2014 study at Stanford, published in the Journal of Experimental Psychology, found that walking increased divergent thinking by up to 81 percent compared to sitting [5]. The effect was driven by the act of walking itself, not the environment. Divergent thinking is the capacity to generate multiple original ideas, to see a problem from new angles, to find solutions that are not obvious. It is, in practical terms, exactly what a developer directing AI needs to do well.
+Your desktop is already on. Your project is already there. Your terminal already has the server running. Your git history is local. Your files are local. Your weird little setup works because you made it work. Why should leaving the room mean leaving all of that behind?
 
-And yet the culture still says otherwise.
+You should be able to reach your computer without moving your work off your computer.
 
-## The perception
+That is the point.
 
-"Serious work" looks like sitting at a desk. A developer reviewing code on a phone does not look like they are working. A developer hunched over a laptop in a dim room does. The posture has become the signal. Not the output, not the quality of thought, not the decisions made. The posture.
+Not "coding on a phone" as a stunt. Not a tiny IDE squeezed into a rectangle. Not a toy terminal. Not a chat app pretending the filesystem is optional.
 
-The belief that real work requires a desk is not based on evidence. It is based on the fact that everyone does it. Everyone does it because the tools require it. The tools require it because they were designed for the desk. This is a loop, not a reason. And it is a loop that others have already begun to break.
+Your computer. Served to you.
 
-## The progress so far
+## The Whole Machine
 
-The instinct to free the computer from the desk is not new. Others have acted on it, and each step has brought the work closer to where the developer actually is.
+If the code lands in files, you need files.
 
-Cloud development environments moved the machine to a data center and accessed it through the browser. This solved the location problem but changed the ownership model: the machine is no longer yours. The environment, the uptime, the pricing belong to someone else. For many developers this tradeoff works well. But personal computing was built on a different promise, which was that the machine, the files, and the environment are yours.
+If the work runs in a shell, you need the shell.
 
-Tools like code-server took a different approach. They kept the machine yours and served the development environment to your own browser. This honored ownership, and it was an important step. But the interface remained a desktop IDE: a wide viewport, a landscape screen, a keyboard, a mouse. It solved remote access. The next step is mobility.
+If the truth is in git, you need git.
 
-The remaining distance is the interface. Not the protocol, not the architecture, not the ownership model. Those have been solved. What has not been solved is building an interface for the screen people actually carry. The technology to close that distance already exists.
+If the test failed, you need the output.
 
-## The pieces
+If an agent is working, you need the session it is working in.
 
-The computer already has a network stack. It can serve applications over HTTP. The browser already knows how to render a full interface. The phone already has a screen and a persistent connection. Serve the computer to the phone. Files, terminal, editor, git. The real operating system, the real filesystem, the real shell. No emulation, no new infrastructure. Sessions persist across disconnects. The terminal does not die when the tab closes. Close the phone, walk away, come back on any device. The state is on the machine, where it belongs.
+That is why `cptr` is the whole computer in a browser: files, terminal, editor, git, AI, tools, and the state between them. The real operating system. The real filesystem. The real shell. The machine you already use.
 
-The interface must be built for the device people actually carry. Not a desktop IDE compressed into a mobile viewport. A tool designed from the ground up for the screen in the pocket. Touch-native. Portrait-native. Built for the way people actually hold their phone, not for the way they used to sit at their desk.
+Close the tab and the terminal keeps running. Open your phone and the session is still there. Come back to the laptop and nothing has been copied, synced, recreated, or translated into a parallel universe. The work stayed where it belonged.
 
-When that interface exists, the life changes.
+On your computer.
 
-## The life
+## The Phone Is The Door
 
-Some people already work this way. They sit at the desk for the deep work because they choose to. They check a deploy from the park. They review a diff from the kitchen while dinner cooks. They push a fix from the train. They pick up their daughter from school and check the build from the bench at the playground while she climbs. When they need four panes and deep concentration, they go to the desk. When they do not, they do not. The computer is on their machine, reachable from their pocket, available at the desk when they want it and from anywhere else when they do not.
+The phone matters because it is the screen you have when you are not at the desk.
 
-The tools shaped the posture. The posture shaped the location. The location shaped the life. Change the tool and the rest follows.
+It is in your pocket at dinner. It is in your hand on the train. It is next to you on the couch. It is with you when the laptop is not.
+
+That does not mean every task should be done on a phone. Some work wants a large screen. Some work wants a keyboard. Some work wants a chair, silence, and time.
+
+Fine.
+
+The desk should be an option, not a toll booth.
+
+If you need to review a complex change across twenty files, maybe you go to the desk. If you need to check whether the build passed, maybe you do not. If an AI agent needs one clarification, maybe you answer from the sidewalk. If a deploy needs approval, maybe you approve it from the kitchen. If the bug is obvious, maybe you fix it from the train and move on with your day.
+
+The phone is not replacing the workstation.
+
+The phone is how you reach it.
+
+## The Life Around The Work
+
+A developer moves somewhere beautiful and still spends the day in a dark room.
+
+A parent works from home and is technically present, but the closed door says otherwise.
+
+Someone opens a laptop at the beach, cannot see the screen, moves to the shade, then to a cafe, then to an air-conditioned room. The beach was the point. The room is where the work happens. Every time.
+
+These are not failures of discipline. They are failures of access.
+
+When every interaction with your computer requires the desk, every small interaction becomes desk time. Check a build: desk. Read a log: desk. Nudge an agent: desk. Review a diff: desk. Push a fix: desk.
+
+The chair collects hours it did not earn.
+
+Over a forty-year career, at eight hours a day and two hundred fifty working days a year, a knowledge worker spends eighty thousand hours in a chair. Not all of that time is deep work. A lot of it is waiting, checking, approving, reading, responding, and making small decisions around the real work.
+
+Those hours are expensive.
+
+They are the hours when the sun is out. The hours when your kid is awake. The hours when a walk would clear your head. The hours when you could be nearby instead of behind a door.
+
+The point is not to work everywhere.
+
+The point is to stop letting the desk decide where work is allowed to happen.
+
+## The Body
+
+The human body is not designed to be still all day. The research is blunt about this.
+
+Long periods of sitting are associated with higher risks of type 2 diabetes, cardiovascular disease, cancer, and all-cause mortality, even after accounting for physical activity [1]. People who sit eight or more hours per day need 60 to 75 minutes of daily moderate-intensity activity to offset the elevated mortality risk [2]. Most people do not get that. More sedentary time keeps adding risk [3].
+
+Exercise also improves general cognition, memory, and executive function [4]. Walking has been shown to increase divergent thinking compared with sitting [5].
+
+That matters because modern computer work is increasingly judgment work. Reading carefully. Spotting what is wrong. Seeing another approach. Explaining intent clearly. These are not helped by being frozen in one posture all day.
+
+The old interface rewarded stillness because the old work required constant input.
+
+The new work needs clearer thinking.
+
+Movement helps.
+
+## The Interface
+
+Remote access is not enough.
+
+A desktop UI compressed onto a phone is still a desktop UI. Tiny panes. Tiny tabs. Tiny buttons. Tiny misery.
+
+The interface has to be built for the device people actually carry. Touch-native. Portrait-native. Designed for thumbs, interruptions, short checks, and real work that comes in pieces.
+
+That is the remaining distance.
+
+The computer can already serve applications over HTTP. The browser already knows how to render them. The phone already has a screen and a persistent connection. The missing thing is not magic infrastructure. It is an interface that treats the phone as a first-class way to reach the machine, not as a shrunken monitor.
+
+## The Choice
+
+This is not an argument against the desk.
+
+The desk is good. The desk is where deep work often belongs.
+
+This is an argument against needing the desk for everything.
+
+Use the big screen when you want the big screen. Use the keyboard when you want the keyboard. Sit down when sitting down helps.
+
+But when you step away, your computer should not become unreachable.
+
+Your files should still be your files. Your shell should still be your shell. Your git state should still be your git state. Your AI should still be working in the same place. Your sessions should still be alive. Your work should still be on the machine you chose.
+
+Some people already work this way. They sit at the desk for the deep work because they choose to. They check a deploy from the couch. They review a diff while dinner cooks. They push a fix from the train. They pick up their daughter from school and check the build from the bench while she plays. When they need four panes and deep concentration, they go back to the desk. When they do not, they do not.
+
+The computer stays home.
+
+The work stays on the computer.
+
+You do not have to.
 
 ---
 
