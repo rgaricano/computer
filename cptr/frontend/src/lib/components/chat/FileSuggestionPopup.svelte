@@ -41,7 +41,7 @@
 			No files found
 		</div>
 	{:else}
-		<div class="px-2 pt-1 pb-0.5 text-[10px] leading-none text-gray-400 dark:text-gray-600">
+		<div class="mb-0.5 px-2 pt-1 pb-0.5 text-[10px] leading-none text-gray-400 dark:text-gray-600">
 			Files
 		</div>
 		<div bind:this={listEl}>
