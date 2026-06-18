@@ -373,6 +373,15 @@
 		gitStatusStore.setRoot(ws.path);
 	});
 
+	// Keep git decorations fresh after filesystem changes.
+	$effect(() => {
+		const _tick = systemEvents.fsTick;
+		const ws = $currentWorkspace;
+		if (_tick > 0 && ws && gitStatusStore.isRepo && systemEvents.isRelevantFsChange(ws.path)) {
+			gitStatusStore.refresh({ force: true });
+		}
+	});
+
 	// Sync isGitRepo flag from centralized store
 	$effect(() => {
 		isGitRepo.set(gitStatusStore.isRepo);

@@ -6,6 +6,7 @@
 
 <script lang="ts">
 	import { activeWorkspace, setFileBrowserCwd, openFileTab, openPreviewTab } from '$lib/stores';
+	import { gitStatusStore, type GitFile } from '$lib/stores/gitStatus.svelte';
 	import { systemEvents } from '$lib/stores/systemEvents.svelte';
 	import { tooltip } from '$lib/tooltip';
 	import {
@@ -77,6 +78,8 @@
 
 	let cwd = $derived($activeWorkspace?.fileBrowserCwd ?? $activeWorkspace?.path ?? '/');
 	let workspacePath = $derived($activeWorkspace?.path ?? '/');
+	let gitStatus = $derived(gitStatusStore.status);
+	let gitRoot = $derived(workspacePath.replace(/\/$/, ''));
 
 	// Ports from this workspace's terminals
 	let workspacePorts = $derived(
@@ -100,6 +103,165 @@
 		}
 		return segments;
 	});
+
+	function normalizeGitPath(path: string): string {
+		return path.replace(/^\/+/, '').replace(/\/$/, '');
+	}
+
+	function toGitRelativePath(path: string): string {
+		if (!gitRoot) return normalizeGitPath(path);
+		if (path === gitRoot) return '';
+		if (path.startsWith(gitRoot + '/')) return normalizeGitPath(path.slice(gitRoot.length + 1));
+		return normalizeGitPath(path);
+	}
+
+	function gitStatusRank(status: string): number {
+		switch (status) {
+			case 'conflict':
+				return 7;
+			case 'deleted':
+				return 6;
+			case 'renamed':
+				return 5;
+			case 'added':
+			case 'untracked':
+				return 4;
+			case 'modified':
+			case 'type-changed':
+				return 3;
+			case 'copied':
+				return 2;
+			default:
+				return 1;
+		}
+	}
+
+	function pickGitStatus(current: GitFile | undefined, next: GitFile): GitFile {
+		if (!current) return next;
+		return gitStatusRank(next.status) > gitStatusRank(current.status) ? next : current;
+	}
+
+	let gitFilesByPath = $derived.by(() => {
+		const files = new Map<string, GitFile>();
+		if (!gitStatus?.is_repo) return files;
+		for (const file of gitStatus.files ?? []) {
+			files.set(normalizeGitPath(file.path), file);
+		}
+		return files;
+	});
+
+	let gitDirsByPath = $derived.by(() => {
+		const dirs = new Map<string, GitFile>();
+		if (!gitStatus?.is_repo || !gitRoot) return dirs;
+
+		for (const file of gitStatus.files ?? []) {
+			const parts = normalizeGitPath(file.path).split('/').filter(Boolean);
+			parts.pop();
+			let current = gitRoot;
+			for (const part of parts) {
+				current = `${current}/${part}`;
+				dirs.set(current, pickGitStatus(dirs.get(current), file));
+			}
+		}
+
+		return dirs;
+	});
+
+	function gitStatusForFile(entry: TreeEntry): GitFile | undefined {
+		if (!gitStatus?.is_repo) return undefined;
+		if (entry.type === 'directory') return undefined;
+
+		const relativePath = toGitRelativePath(entry.path);
+		return gitFilesByPath.get(relativePath);
+	}
+
+	function gitStatusForDirectory(entry: TreeEntry): GitFile | undefined {
+		if (!gitStatus?.is_repo) return undefined;
+		if (entry.type !== 'directory') return undefined;
+
+		return gitDirsByPath.get(entry.path.replace(/\/$/, ''));
+	}
+
+	function gitStatusDecoration(status: string): {
+		char: string;
+		textColor: string;
+		markerColor: string;
+		label: string;
+	} {
+		switch (status) {
+			case 'added':
+				return {
+					char: 'A',
+					textColor: 'text-emerald-600/80 dark:text-emerald-300/80',
+					markerColor: 'bg-emerald-500/70',
+					label: 'Added'
+				};
+			case 'untracked':
+				return {
+					char: 'U',
+					textColor: 'text-emerald-600/80 dark:text-emerald-300/80',
+					markerColor: 'bg-emerald-500/70',
+					label: 'Untracked'
+				};
+			case 'modified':
+				return {
+					char: 'M',
+					textColor: 'text-amber-600/75 dark:text-amber-300/75',
+					markerColor: 'bg-amber-500/65',
+					label: 'Modified'
+				};
+			case 'deleted':
+				return {
+					char: 'D',
+					textColor: 'text-rose-500/80 dark:text-rose-300/80',
+					markerColor: 'bg-rose-500/70',
+					label: 'Deleted'
+				};
+			case 'renamed':
+				return {
+					char: 'R',
+					textColor: 'text-sky-500/80 dark:text-sky-300/80',
+					markerColor: 'bg-sky-500/70',
+					label: 'Renamed'
+				};
+			case 'copied':
+				return {
+					char: 'C',
+					textColor: 'text-sky-500/75 dark:text-sky-300/75',
+					markerColor: 'bg-sky-500/65',
+					label: 'Copied'
+				};
+			case 'type-changed':
+				return {
+					char: 'T',
+					textColor: 'text-violet-500/75 dark:text-violet-300/75',
+					markerColor: 'bg-violet-500/65',
+					label: 'Type changed'
+				};
+			case 'conflict':
+				return {
+					char: '!',
+					textColor: 'text-orange-500/85 dark:text-orange-300/85',
+					markerColor: 'bg-orange-500/75',
+					label: 'Conflict'
+				};
+			default:
+				return {
+					char: '?',
+					textColor: 'text-gray-500/80 dark:text-gray-400/80',
+					markerColor: 'bg-gray-400/70',
+					label: 'Changed'
+				};
+		}
+	}
+
+	function gitStatusTooltip(file: GitFile, entry: TreeEntry): string {
+		const badge = gitStatusDecoration(file.status);
+		const scope = entry.type === 'directory' ? 'contains ' : '';
+		const state =
+			file.staged && file.unstaged ? 'staged and unstaged' : file.staged ? 'staged' : 'unstaged';
+		return `${scope}${badge.label} (${state})`;
+	}
 
 	// Fetch directory on cwd change
 	let _prevCwd = '';
@@ -910,6 +1072,10 @@
 				{:else}
 					{@const isSelected = selectedPaths.has(entry.path)}
 					{@const isDragTarget = dragOverDir !== null && (entry.path === dragOverDir || entry.path.startsWith(dragOverDir + '/'))}
+					{@const fileGitStatus = gitStatusForFile(entry)}
+					{@const dirGitStatus = gitStatusForDirectory(entry)}
+					{@const entryGitStatus = fileGitStatus ?? dirGitStatus}
+					{@const entryGitDecoration = entryGitStatus ? gitStatusDecoration(entryGitStatus.status) : null}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<button
 						class="group flex items-center gap-1 w-full h-7 rounded-lg text-left transition-colors duration-75
@@ -964,16 +1130,34 @@
 						</span>
 						{#if entry.type === 'directory'}
 							<span
-								class="flex-1 text-xs text-gray-800 dark:text-gray-200 truncate"
+								class="flex-1 text-xs truncate {entryGitDecoration
+									? entryGitDecoration.textColor
+									: 'text-gray-800 dark:text-gray-200'}"
 								>{entry.name}</span
 							>
 						{:else}
-							<span class="flex-1 text-xs text-gray-800 dark:text-gray-200 truncate"
+							<span
+								class="flex-1 text-xs truncate {entryGitDecoration
+									? entryGitDecoration.textColor
+									: 'text-gray-800 dark:text-gray-200'}"
 								>{entry.name}</span
 							>
 						{/if}
+						{#if dirGitStatus && entryGitDecoration}
+							<span
+								class="w-1.5 h-1.5 rounded-full shrink-0 {entryGitDecoration.markerColor}"
+								use:tooltip={gitStatusTooltip(dirGitStatus, entry)}
+							></span>
+						{/if}
+						{#if fileGitStatus && entryGitDecoration}
+							<span
+								class="text-[10px] font-mono font-bold shrink-0 {entryGitDecoration.textColor}"
+								use:tooltip={gitStatusTooltip(fileGitStatus, entry)}
+								>{entryGitDecoration.char}</span
+							>
+						{/if}
 						{#if entry.type !== 'directory' && entry.size !== null}
-							<span class="text-[11px] font-mono text-gray-400 dark:text-gray-600 shrink-0"
+							<span class="ml-1 text-[11px] font-mono text-gray-400 dark:text-gray-600 shrink-0"
 								>{formatSize(entry.size)}</span
 							>
 						{/if}
