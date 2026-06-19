@@ -177,6 +177,8 @@
 				return _t('chat.tool.checkTask', { id: args.task_id || '?' });
 			case 'kill_task':
 				return _t('chat.tool.killTask', { id: args.task_id || '?' });
+			case 'image_generate':
+				return args.image || args.images?.length ? 'Edit image' : 'Generate image';
 			case 'web_search':
 				return _t('chat.tool.webSearch', { query: args.query || '?' });
 			case 'read_url': {

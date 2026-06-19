@@ -674,7 +674,7 @@ def _parse_image_data_uri(result: str) -> tuple[str, str] | None:
 
 def _tool_result_for_model(tool_name: str, result: str) -> str:
     """Return the tool result text to send back to the model."""
-    if tool_name not in {"generate_image", "edit_image"}:
+    if tool_name != "image_generate":
         return result
 
     try:
@@ -966,7 +966,7 @@ def build_artifact_item(tool_name: str, arguments: dict, result: str) -> dict | 
 
 def build_image_item(tool_name: str, result: str) -> dict | None:
     """Build a renderable image output item for image-generation tools."""
-    if tool_name not in {"generate_image", "edit_image"}:
+    if tool_name != "image_generate":
         return None
 
     try:

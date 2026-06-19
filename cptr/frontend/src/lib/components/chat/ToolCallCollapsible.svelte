@@ -27,7 +27,7 @@
 	const isRejected = $derived(item.status === 'rejected');
 	const isPending = $derived(item.status === 'pending');
 	const imageToolOutput = $derived.by(() => {
-		if (!['generate_image', 'edit_image'].includes(toolName) || !pairedOutput?.output) {
+		if (toolName !== 'image_generate' || !pairedOutput?.output) {
 			return null;
 		}
 		try {
