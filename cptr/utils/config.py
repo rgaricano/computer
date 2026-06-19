@@ -9,9 +9,9 @@ import secrets
 import time
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 
 import bcrypt
+import jwt  # PyJWT
 
 from cptr.env import DATA_DIR, CONFIG_FILE
 
@@ -164,6 +164,8 @@ def sync_config_to_toml(app_config: dict) -> None:
     # Build the app_config section
     toml_section: dict = {}
     for key, value in app_config.items():
+        if value is None:
+            continue
         if isinstance(value, (list, dict)):
             # Store complex types as JSON strings
             toml_section[key] = _json.dumps(value, ensure_ascii=False)
@@ -230,7 +232,6 @@ async def has_any_user() -> bool:
         return result.scalar_one_or_none() is not None
 
 
-
 # ── PAM ──────────────────────────────────────────────────────
 
 
@@ -289,8 +290,6 @@ async def get_or_create_user(username: str) -> str:
 
 
 # ── JWT Tokens (stateless auth) ──────────────────────────────
-
-import jwt  # PyJWT
 
 
 def _get_jwt_secret() -> str:

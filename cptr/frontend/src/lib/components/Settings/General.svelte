@@ -6,6 +6,7 @@
 	import { t, locale, changeLocale, supportedLocales } from '$lib/i18n';
 	import { notificationsEnabled, notificationSound } from '$lib/stores/chat';
 	import { fetchJSON } from '$lib/apis';
+	import { updateConfig } from '$lib/apis/admin';
 	import { session } from '$lib/session';
 	import ToggleSwitch from '../common/ToggleSwitch.svelte';
 	import { onMount } from 'svelte';
@@ -33,10 +34,7 @@
 	async function save() {
 		saving = true;
 		try {
-			await fetchJSON('/api/admin/config', {
-				method: 'PUT',
-				body: JSON.stringify({ config: { 'notifications.webhook_url': webhookUrl.trim() || null } })
-			});
+			await updateConfig({ 'notifications.webhook_url': webhookUrl.trim() || null });
 			webhookUrlOriginal = webhookUrl.trim();
 			toast.success($t('settings.saved'));
 		} catch {

@@ -51,6 +51,10 @@ class Config(Base):
         async with await get_db() as db:
             for key, value in updates.items():
                 existing = await db.get(Config, key)
+                if value is None:
+                    if existing:
+                        await db.delete(existing)
+                    continue
                 if existing:
                     existing.value = value
                 else:
@@ -66,6 +70,4 @@ class Config(Base):
         except Exception:
             import logging
 
-            logging.getLogger(__name__).warning(
-                "Failed to sync config to TOML", exc_info=True
-            )
+            logging.getLogger(__name__).warning("Failed to sync config to TOML", exc_info=True)
