@@ -111,7 +111,7 @@ Message your computer from wherever you are. Ask it to check a build, push a fix
 
 ## Gateway API
 
-cptr exposes an OpenAI-compatible API (`/v1/chat/completions`). Any client that speaks OpenAI, including [Open WebUI](https://github.com/open-webui/open-webui), can use each cptr workspace as a model with full agent capabilities: file access, terminal, web search, tools.
+Open WebUI Computer exposes an OpenAI-compatible API (`/v1/chat/completions`). Any client that speaks OpenAI, including [Open WebUI](https://github.com/open-webui/open-webui), can use each Open WebUI Computer workspace as a model with full agent capabilities: file access, terminal, web search, tools.
 
 ## More
 
@@ -132,11 +132,11 @@ cptr exposes an OpenAI-compatible API (`/v1/chat/completions`). Any client that 
 
 **Mobile is first-class.** The interface is built for the phone. Touch-native, portrait-native, designed for the screen people carry. Sessions survive disconnects because on a phone, they will. If a feature only works at a desk, it's not done.
 
-**Your machine.** cptr serves the machine it runs on. The local filesystem, the local shell, local state. Where that machine lives is up to you.
+**Your machine.** Open WebUI Computer serves the machine it runs on. The local filesystem, the local shell, local state. Where that machine lives is up to you.
 
-**Computer, not chat.** The core is the filesystem, the terminal, and git. Files over apps. Plain files on your machine, not content trapped inside another product. AI conversations are files too: searchable, editable, movable, commit-able. cptr is a window into the real system, not a container on top of it.
+**Computer, not chat.** The core is the filesystem, the terminal, and git. Files over apps. Plain files on your machine, not content trapped inside another product. AI conversations are files too: searchable, editable, movable, commit-able. Open WebUI Computer is a window into the real system, not a container on top of it.
 
-`cptr` runs on your machine and puts the whole thing in a browser tab. Pull out your phone and you're in. Files, editor, terminal, git, running on the computer you already own.
+Open WebUI Computer runs on your machine and puts the whole thing in a browser tab. Pull out your phone and you're in. Files, editor, terminal, git, running on the computer you already own.
 
 Push a hotfix from the train. Check on a deploy from bed. Ship a side project from the park. Stage and commit without touching the command line, or open the terminal and do it the old way. Search across files. Preview markdown. Drag things around. Switch between projects without losing your place.
 
@@ -149,7 +149,7 @@ Life is short. Touch grass. Read our [Manifesto](MANIFESTO.md).
 
 ## Docker
 
-Run cptr with Docker:
+Run Open WebUI Computer with Docker:
 
 ```bash
 docker run --rm -it \
@@ -162,7 +162,7 @@ docker run --rm -it \
 
 Then open the URL printed in the logs, usually `http://localhost:8000/?token=...`.
 
-`cptr` stores its state in `/data`. Mount your project into the container, like `-v "$PWD:/workspace"`, so cptr can access it.
+Open WebUI Computer stores its state in `/data`. Mount your project into the container, like `-v "$PWD:/workspace"`, so Open WebUI Computer can access it.
 
 If you bind-mount a host directory to `/data`, make sure that directory is writable by the container user. SQLite needs to create and update `/data/app.db`, and host directory permissions take precedence over the image's built-in `/data` ownership.
 
