@@ -1,4 +1,4 @@
-# Computer (cptr)
+# Open WebUI Computer (cptr)
 
 ![GitHub stars](https://img.shields.io/github/stars/open-webui/computer?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/open-webui/computer?style=social)
