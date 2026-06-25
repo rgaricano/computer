@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-06-25
+
+### Added
+
+- 🤖 **Coding agents.** You can now connect Codex and Claude Code as AI backends. Configure agent profiles from the new Agents tab in admin settings, and they show up as selectable models in the chat. Each agent runs in your workspace with full tool access, and conversations can be resumed where you left off.
+- ⚙️ **Agents admin panel.** A new Agents section in Settings lets you add, edit, and remove agent profiles. You can configure the command path, model list, approval and permission modes, and see at a glance whether each agent is installed and ready.
+- 🎙️ **Voice dictation in the terminal.** The mobile shortcut bar now has a microphone button that lets you dictate text directly into the terminal using speech recognition.
+- ℹ️ **System info modal.** A new "System info" option in the sidebar menu shows your machine's hostname, OS, CPU, memory, disk, and running processes in a dedicated modal instead of on the welcome screen.
+
+### Changed
+
+- 🏠 **Redesigned welcome screen.** The home page now highlights a "Continue" section that picks up your most recent workspace with context about what was happening (active tasks, running processes). Recent workspaces also show status signals so you can see which ones have work in progress.
+- 🏷️ **Renamed to Computer.** All visible references to "cptr" in the UI, notifications, and documentation now read "Computer" for clarity.
+- 🧹 **Code formatting cleanup.** Whitespace and formatting improvements across frontend components.
+
 ## [0.6.2] - 2026-06-25
 
 ### Added
