@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-06-26
+
+### Changed
+
+- 🤖 **More reliable Codex agent connection.** The Codex agent now handles large and unexpected output more gracefully, with better error messages when the connection drops or something goes wrong. You'll see a clear explanation instead of a silent failure.
+- 🔄 **Live command output for Codex agent.** When the Codex agent runs commands or edits files, you can now see the output streaming in real time instead of only after the step finishes. Long output is automatically trimmed to keep things readable.
+- 🤖 **Codex agent handles approval requests.** The agent now responds to approval prompts from newer Codex versions automatically, based on the permission mode you've configured.
+
 ## [0.7.0] - 2026-06-25
 
 ### Added
