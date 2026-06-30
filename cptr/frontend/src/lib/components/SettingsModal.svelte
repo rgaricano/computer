@@ -93,7 +93,7 @@
 		{ id: 'web', label: $t('admin.web'), icon: 'globe' },
 		{ id: 'toolservers', label: $t('admin.toolServers'), icon: 'plug' },
 		{ id: 'subagents', label: $t('admin.subagents'), icon: 'user' },
-		{ id: 'memory', label: 'Memory', icon: 'brain' }
+		{ id: 'memory', label: $t('settings.memory'), icon: 'brain' }
 	]);
 
 	onMount(() => {

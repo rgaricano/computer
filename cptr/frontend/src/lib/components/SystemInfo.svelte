@@ -49,18 +49,19 @@
 
 	const summary = $derived.by(() => {
 		const parts: string[] = [];
-		if (sys.cpu_usage != null) parts.push(`cpu ${sys.cpu_usage}%`);
+		if (sys.cpu_usage != null) parts.push($t('system.summaryCpu', { percent: sys.cpu_usage }));
 		if (sys.memory_total) {
 			const memPct = Math.round(
 				((sys.memory_total - (sys.memory_available ?? 0)) / sys.memory_total) * 100
 			);
-			parts.push(`mem ${memPct}%`);
+			parts.push($t('system.summaryMemory', { percent: memPct }));
 		}
 		if (sys.disk_total) {
 			const diskPct = Math.round(((sys.disk_used ?? 0) / sys.disk_total) * 100);
-			parts.push(`disk ${diskPct}%`);
+			parts.push($t('system.summaryDisk', { percent: diskPct }));
 		}
-		if (sys.uptime_seconds) parts.push(`up ${formatUptime(sys.uptime_seconds)}`);
+		if (sys.uptime_seconds)
+			parts.push($t('system.uptime', { value: formatUptime(sys.uptime_seconds) }));
 		return parts.join('  ');
 	});
 </script>
@@ -125,10 +126,10 @@
 			<span>{$t('system.cores', { count: sys.cpu_count })}</span>
 			<span>{sys.arch}</span>
 			{#if sys.uptime_seconds}
-				<span>up {formatUptime(sys.uptime_seconds)}</span>
+				<span>{$t('system.uptime', { value: formatUptime(sys.uptime_seconds) })}</span>
 			{/if}
 			{#if sys.load_avg}
-				<span>load {sys.load_avg.join(' ')}</span>
+				<span>{$t('system.load', { value: sys.load_avg.join(' ') })}</span>
 			{/if}
 		</div>
 
@@ -145,8 +146,8 @@
 		{#if processes.length}
 			<div class="mt-1 font-mono text-[11px]">
 				<div class="flex items-center gap-2 text-gray-400 dark:text-gray-600 mb-1">
-					<span class="w-14 text-right">CPU</span>
-					<span class="w-12 text-right">MEM</span>
+					<span class="w-14 text-right">{$t('system.cpuShort')}</span>
+					<span class="w-12 text-right">{$t('system.memoryShort')}</span>
 					<span class="flex-1">{$t('system.process')}</span>
 				</div>
 				{#each processes as proc}
