@@ -85,7 +85,7 @@ Files:
 		if (!rp || typeof rp !== 'object') return [];
 		return Object.entries(rp).map(([key, value]) => ({
 			key,
-			value: typeof value === 'object' ? JSON.stringify(value) : String(value)
+			value: typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)
 		}));
 	}
 

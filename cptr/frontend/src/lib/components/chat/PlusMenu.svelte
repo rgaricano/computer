@@ -35,7 +35,7 @@
 	let paramRows = $state<Array<{ key: string; value: string }>>(
 		Object.entries($requestParams).map(([key, value]) => ({
 			key,
-			value: typeof value === 'object' ? JSON.stringify(value) : String(value)
+			value: typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)
 		}))
 	);
 
