@@ -164,9 +164,8 @@ class AcpClient:
 
     async def _send(self, payload: dict[str, Any]) -> None:
         assert self.proc is not None and self.proc.stdin is not None
-        data = json.dumps(payload, separators=(",", ":")).encode()
-        framed = b"Content-Length: " + str(len(data)).encode() + b"\r\n\r\n" + data
-        self.proc.stdin.write(framed)
+        data = json.dumps(payload, separators=(",", ":")).encode() + b"\n"
+        self.proc.stdin.write(data)
         await self.proc.stdin.drain()
 
     async def _reader_loop(self) -> None:

@@ -38,6 +38,14 @@
 			return null;
 		}
 	});
+	const formattedOutput = $derived.by(() => {
+		if (!pairedOutput?.output) return '';
+		try {
+			return JSON.stringify(JSON.parse(pairedOutput.output), null, 2);
+		} catch {
+			return pairedOutput.output;
+		}
+	});
 
 	function toggleExpanded() {
 		expanded = !expanded;
@@ -240,8 +248,8 @@
 								{#each Object.entries(args) as [key, value]}
 									<div class="flex gap-2 text-xs py-0.5">
 										<span class="text-gray-600 dark:text-gray-400 shrink-0">{key}</span>
-										<span class="text-gray-800 dark:text-gray-200 break-all">
-											{typeof value === 'object' ? JSON.stringify(value) : value}
+										<span class="text-gray-800 dark:text-gray-200 break-all whitespace-pre-wrap">
+											{typeof value === 'object' ? JSON.stringify(value, null, 2) : value}
 										</span>
 									</div>
 								{/each}
@@ -268,15 +276,15 @@
 								</div>
 							{:else}
 								<pre
-									class="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap break-words font-mono max-h-64 overflow-auto leading-relaxed">{pairedOutput
-										.output.length > 10000
-										? pairedOutput.output.slice(0, 10000)
-										: pairedOutput.output}</pre>
+									class="text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap break-words font-mono max-h-64 overflow-auto leading-relaxed">{formattedOutput.length >
+									10000
+										? formattedOutput.slice(0, 10000)
+										: formattedOutput}</pre>
 							{/if}
-							{#if !imageToolOutput?.length && pairedOutput.output.length > 10000}
+							{#if !imageToolOutput?.length && formattedOutput.length > 10000}
 								<div class="text-[10px] text-gray-400 dark:text-gray-600 mt-1 px-1">
 									{$t('chat.totalChars', {
-										count: pairedOutput.output.length.toLocaleString()
+										count: formattedOutput.length.toLocaleString()
 									})}
 								</div>
 							{/if}
