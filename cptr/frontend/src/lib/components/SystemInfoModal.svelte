@@ -4,6 +4,7 @@
 	import SystemInfo from './SystemInfo.svelte';
 	import Spinner from './common/Spinner.svelte';
 	import { getWelcome } from '$lib/apis/state';
+	import { t } from '$lib/i18n';
 
 	interface Props {
 		onclose: () => void;
@@ -50,7 +51,7 @@
 	<div class="px-4 py-3.5">
 		<div class="mb-3 flex items-baseline justify-between gap-3">
 			<div class="min-w-0">
-				<h2 class="text-sm font-medium text-gray-900 dark:text-white">System info</h2>
+				<h2 class="text-sm font-medium text-gray-900 dark:text-white">{$t('system.infoTitle')}</h2>
 				{#if welcomeData?.hostname}
 					<p class="mt-0.5 truncate font-mono text-[11px] text-gray-400 dark:text-gray-600">
 						{welcomeData.hostname}
@@ -67,7 +68,7 @@
 			<SystemInfo system={welcomeData.system} processes={welcomeData.processes ?? []} defaultOpen />
 		{:else}
 			<div class="py-8 text-center text-xs text-gray-400 dark:text-gray-600">
-				System info unavailable
+				{$t('system.unavailable')}
 			</div>
 		{/if}
 	</div>

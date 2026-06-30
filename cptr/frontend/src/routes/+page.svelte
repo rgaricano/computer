@@ -540,14 +540,15 @@
 	function resumeSignals(resume: WorkspaceResume | undefined): string[] {
 		if (!resume) return [];
 		const signals: string[] = [];
-		if (resume.terminalCount) signals.push(`${resume.terminalCount} term`);
+		if (resume.terminalCount)
+			signals.push($t('home.terminalShort', { count: resume.terminalCount }));
 		if (resume.previewPorts.length)
 			signals.push(resume.previewPorts.map((port) => `:${port}`).join(', '));
 		if (resume.chatCount || resume.activeChatCount) {
 			signals.push(
 				resume.activeChatCount
-					? `${resume.activeChatCount} active chat${resume.activeChatCount === 1 ? '' : 's'}`
-					: `${resume.chatCount} chat${resume.chatCount === 1 ? '' : 's'}`
+					? $t('home.activeChat', { count: resume.activeChatCount })
+					: $t('home.chat', { count: resume.chatCount })
 			);
 		}
 		return signals;
@@ -733,13 +734,13 @@
 					class="text-[13px] text-gray-600 transition-colors duration-100 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
 					onclick={() => (showPicker = true)}
 				>
-					Open workspace
+					{$t('home.openWorkspace')}
 				</button>
 			</div>
 
 			{#if continuation}
 				<div class="mb-6">
-					<h2 class="mb-2 text-xs text-gray-400 dark:text-gray-600">Continue</h2>
+					<h2 class="mb-2 text-xs text-gray-400 dark:text-gray-600">{$t('home.continue')}</h2>
 					<button
 						class="group w-full min-w-0 py-1.5 text-left transition-colors duration-100"
 						onclick={() => quickOpen(continuation.path)}
@@ -812,7 +813,7 @@
 						class="text-[13px] text-gray-500 transition-colors duration-100 hover:text-gray-900 dark:text-gray-500 dark:hover:text-white"
 						onclick={() => (showPicker = true)}
 					>
-						No workspaces yet
+						{$t('home.noWorkspaces')}
 					</button>
 				</div>
 			{/if}

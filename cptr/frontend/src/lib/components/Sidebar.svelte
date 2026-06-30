@@ -511,7 +511,7 @@
 				onclick: openSettings
 			},
 			{
-				label: 'System info',
+				label: $t('system.infoTitle'),
 				icon: 'info',
 				onclick: openSystemInfo
 			},
