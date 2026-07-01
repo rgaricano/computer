@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-06-30
+
+### Added
+
+- 🖥️ **Live command sessions in chat.** Running commands now appear in the chat status menu, where you can open live output, keep an eye on long jobs, and terminate a stuck command without leaving the conversation.
+- 📊 **More useful chat status.** Chats now have a compact status bar with the conversation title, context usage, queued messages, Chat ID, and active command count in one place.
+
+### Fixed
+
+- ⌨️ **More reliable command control.** Long-running commands now keep accepting input and can be stopped from either the chat tools or the live session view.
+- 🧹 **Cleaner activity details.** Chat activity stays aligned and easier to scan while command output remains available where it is useful.
+
 ## [0.7.3] - 2026-06-30
 
 ### Fixed
@@ -188,12 +200,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- 📁 **File browser drag-and-drop completely reworked.** You can now freely drag and drop files and folders anywhere — into folders, onto breadcrumbs, or between nested directories. Multi-select drag, auto-expand on hover, and full expanded-area highlighting are all supported.
+- 📁 **File browser drag-and-drop completely reworked.** You can now freely drag and drop files and folders anywhere: into folders, onto breadcrumbs, or between nested directories. Multi-select drag, auto-expand on hover, and full expanded-area highlighting are all supported.
 
 ### Fixed
 
 - 📋 **Dropdown menus no longer get cut off by the keyboard on mobile.** Menus that open upward (like the model picker) now anchor from the bottom of the screen instead of the top, so they stay fully visible even when the on-screen keyboard is open.
-- 🔄 **Renamed files no longer break git operations.** Renaming or moving a file could cause errors when staging, discarding, or viewing changes — the file list would show garbled entries like "R100 old-name.txt" instead of the actual file. This is now handled correctly.
+- 🔄 **Renamed files no longer break git operations.** Renaming or moving a file could cause errors when staging, discarding, or viewing changes, and the file list would show garbled entries like "R100 old-name.txt" instead of the actual file. This is now handled correctly.
 
 ## [0.4.9] - 2026-06-15
 
@@ -238,7 +250,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 🧠 **Reasoning models no longer lose chain of thought across parallel tool calls.** Multiple tool calls in the same turn are now grouped into a single assistant message with shared reasoning items, instead of being split into separate messages that broke reasoning model round-tripping (e.g. o3, o4-mini).
 - 🛡️ **Orphaned tool calls no longer break chat history.** If a crash or data corruption left a function call without a matching result, the Responses API conversion now skips the orphaned call instead of sending invalid input that caused permanent 400 errors.
-- 🔄 **Tool output ordering prevents corrupted history on crash.** Tool call outputs are now appended to the output list *before* marking the call as "completed", so a crash between the two steps can no longer produce a "completed" call with no output — which would corrupt the message history on reload.
+- 🔄 **Tool output ordering prevents corrupted history on crash.** Tool call outputs are now appended to the output list *before* marking the call as "completed", so a crash between the two steps can no longer produce a "completed" call with no output and corrupt the message history on reload.
 - 🧹 **In-progress tool calls scrubbed on error or cancellation.** When a chat task is cancelled or hits an error, any tool calls still marked "in_progress" are now set to "failed" before persisting, preventing stale in-progress items from lingering in the database.
 
 ## [0.4.4] - 2026-06-15
@@ -246,9 +258,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - 🧙 **Setup wizard.** A friendly first-run guide walks you through picking a folder and connecting your AI. Pops up automatically after sign-up.
-- 🔌 **Local tool servers (stdio).** You can now connect MCP tool servers that run as local commands — not just over HTTP. Add the command and arguments from the Tool Servers tab.
+- 🔌 **Local tool servers (stdio).** You can now connect MCP tool servers that run as local commands, not just over HTTP. Add the command and arguments from the Tool Servers tab.
 - 📄 **Read documents.** The AI can now open and read PDFs, Word docs, Excel spreadsheets, PowerPoint files, and more.
-- 💬 **Send input to running commands.** The AI can now type into running processes — answering prompts, interacting with REPLs, or sending Ctrl-C.
+- 💬 **Send input to running commands.** The AI can now type into running processes, answer prompts, interact with REPLs, or send Ctrl-C.
 - ↩️ **Undo last commit.** Changed your mind? Undo the last commit from the Git history and get your changes back in staging.
 - 🚀 **Publish branches.** Push a new branch for the first time with one click. The button says "Publish" when there's no upstream yet.
 - 🔗 **View on GitHub / GitLab.** A new link in the Git panel takes you straight to your repo on the web.
@@ -414,7 +426,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- 🔍 **Global search modal.** New unified search (⌘K / ⌘⇧F) that finds chats by title *and* message content, plus files by name — across all workspaces or scoped to the active one. Shows recent chats when the query is empty. Replaces the old QuickOpen modal.
+- 🔍 **Global search modal.** New unified search (⌘K / ⌘⇧F) that finds chats by title *and* message content, plus files by name across all workspaces or scoped to the active one. Shows recent chats when the query is empty. Replaces the old QuickOpen modal.
 - 🌐 **Perplexity web search provider.** Added Perplexity as a first-class search provider (auto-detected between Exa and Tavily when `PERPLEXITY_API_KEY` is set).
 - 🌐 **Chat Completions search provider.** Any OpenAI-compatible `/chat/completions` endpoint (e.g. Perplexity Sonar, LiteLLM proxy) can now be used for web search. Configure via Settings or environment variables.
 - ➕ **New Chat button per workspace.** Each workspace row in the sidebar now shows a pencil icon on hover to quickly create a new chat.
@@ -487,7 +499,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - 🗄️ **Alembic migration no longer fails on startup.** Renamed migration revision IDs from 3-character (`001`) to 4-character (`0001`) identifiers, fixing Alembic's `ResolutionError` for partial revision matches.
-- 📦 **PyPI wheel no longer bundles frontend source code.** Fixed `.gitignore` paths (old `computr/` → `cptr/`) and added an explicit `exclude` in `pyproject.toml` so only `cptr/frontend/build` ships in the wheel — eliminating ~14,000 unnecessary files including `node_modules`.
+- 📦 **PyPI wheel no longer bundles frontend source code.** Fixed `.gitignore` paths (old `computr/` → `cptr/`) and added an explicit `exclude` in `pyproject.toml` so only `cptr/frontend/build` ships in the wheel, eliminating ~14,000 unnecessary files including `node_modules`.
 
 ## [0.1.4] - 2026-06-06
 
@@ -533,7 +545,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- 🛑 **File browser no longer refreshes constantly.** Replaced the macOS `PollingObserver` (which generated a feedback loop of phantom filesystem events) with the native `FSEventsObserver`. Background refreshes are now silent — no more loading spinner flash on every update.
+- 🛑 **File browser no longer refreshes constantly.** Replaced the macOS `PollingObserver` (which generated a feedback loop of phantom filesystem events) with the native `FSEventsObserver`. Background refreshes are now silent, so there is no more loading spinner flash on every update.
 - 🔇 **Eliminated noisy filesystem watcher events.** The watcher now ignores changes in `.git`, `__pycache__`, `.DS_Store`, and `node_modules` directories, which were triggering unnecessary file browser refreshes.
 - ⚡ **Centralized git status store.** All components (GitBar, GitView, FileEditor, layout) now share a single `gitStatusStore` instead of each independently polling `git/status`. On page load, this reduces git status API calls from ~6+ down to 1.
 - 🔁 **Reduced git polling frequency.** Removed the 5-second git status polling intervals that were running in multiple components simultaneously.
@@ -547,7 +559,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 💬 **AI chat.** Built-in chat panel with multi-provider LLM support (OpenAI, Anthropic, Ollama, and OpenAI-compatible endpoints), model selector, tool calling, and streaming responses.
 - 🔧 **Tool system.** Extensible tool framework enabling AI agents to interact with the local filesystem, run commands, search the web (Brave, DuckDuckGo, Exa, Tavily), and read URLs. Streaming JSON parser for improved tool-calling reliability.
 - 📎 **File mentions.** Type `@` in the chat input to mention files with an inline suggestion popup, giving the AI context about your codebase.
-- 🔄 **Queued messages.** Queue follow-up messages while the AI is responding — they'll be sent automatically when the current response completes.
+- 🔄 **Queued messages.** Queue follow-up messages while the AI is responding. They will be sent automatically when the current response completes.
 - ✏️ **Output editing.** Review and edit AI-generated file changes before applying them.
 - 📁 **File browser.** Web-based file explorer with directory navigation, file viewing, file icons by extension, and management capabilities.
 - ⌨️ **Keyboard shortcuts.** Customizable keybinding system with a dedicated settings panel, including support for new-tab, quick-open, and other common actions.
