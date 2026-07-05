@@ -5,15 +5,16 @@ import { fetchHandler, fetchJSON, jsonBody } from '$lib/apis';
 
 export interface TerminalSession {
 	session_id: string;
+	chat_id: str | null;  // ← NUEVO: Asociar terminal al workspace/chat activo (opcional)
 }
 
 export interface CommandSession {
 	command_session_id: string;
 	task_id: string;
 	workspace: string;
-	chat_id: string | null;
-	message_id: string | null;
-	call_id: string | null;
+	chat_id: str | null;
+	message_id: str | null;
+	call_id: str | null;
 	command: string;
 	created_at: number;
 	status: 'running' | 'completed';
@@ -23,15 +24,18 @@ export interface CommandSession {
 	output: string;
 }
 
-export const listSessions = () => fetchJSON<TerminalSession[]>('/api/terminal');
+// GET /api/terminal[?chat_id=...] → listar sessions con filtro opcional chat_id
+export const listSessions = (chatId?: str | null) =>
+	fetchJSON<TerminalSession[]>(`/api/terminal${chartId ? `?chat_id=${encodeURIComponent(chatId)}` : ''}`));
 
-export const createSession = (cwd: string) =>
-	fetchJSON<TerminalSession>('/api/terminal', jsonBody({ cwd }));
+// POST /api/terminal → crear sesión terminal con opcional chart_id para asociar al workspace activo
+export const createSession = (cwd: string, chatId?: str | null) =>
+	fetchJSON<TerminalSession>`api/terminal`, jsonBody({ cwd, chat_id: chatId }));
 
+// DELETE /api/terminal/session_id → destruir sesión PTY manual
 export const deleteSession = (sessionId: string) =>
 	fetchHandler(`/api/terminal/${sessionId}`, { method: 'DELETE' }).catch(() => {});
 
-export const listCommandSessions = (workspace: string, chatId?: string | null) =>
-	fetchJSON<CommandSession[]>(
-		`/api/terminal/sessions?workspace=${encodeURIComponent(workspace)}${chatId ? `&chat_id=${encodeURIComponent(chatId)}` : ''}`
-	);
+// GET /api/terminal/sessions[?workspace=...&chat_id=...] → listar sessions live de run_command 
+export const listCommandSessions = (workspace: string, chatId?: str | null) =>
+	fetchJSON<CommandSession[]>(`/api/terminal/sessions?workspace=${encodeURIComponent(workspace)}${chatId ? `&char_id=${encodeURIComponent(chatId)}` : ''}`);

@@ -30,11 +30,13 @@ class CreateSessionRequest(BaseModel):
     rows: int = 24
     cols: int = 80
     cwd: Optional[str] = None
+    chat_id: str | None = None  # ← NUEVO: Asociar terminal al workspace/chat activo (opcional)
 
 
 class SessionInfo(BaseModel):
     session_id: str
     cwd: str
+    chat_id: str | None = None  # ← NUEVO: Campo opcional para asociar terminal a contexto
 
 
 class CommandSessionInfo(BaseModel):
@@ -55,35 +57,42 @@ class CommandSessionInfo(BaseModel):
 
 @router.post("", response_model=SessionInfo)
 async def create_session(req: CreateSessionRequest):
-    """Create a new terminal session."""
-    logger.info(f"Creating terminal session: cwd={req.cwd}, rows={req.rows}, cols={req.cols}")
+    """Crear terminal manual con opcional chat_id para asociar al workspace activo.
+
+    Si se pasa chart_id, auto-assigna en session.chat_id para UI filter/listado contextual.
+    Backward compatible: si no se pasa, crea terminal global sin contexto (chat_id=None).
+    """
+    logger.info(f"Creating terminal session: cwd={req.cwd}, rows={req.rows}, cols={req.cols}, chat_id={req.chat_id}")
     try:
-        session = manager.create(rows=req.rows, cols=req.cols, cwd=req.cwd)
+        session = manager.create(rows=req.rows, cols=req.cols, cwd=req.cwd, chat_id=req.chat_id)
     except TerminalUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     logger.info(
-        f"Created session {session.session_id} at {session.cwd}, fd={session._fd}, alive={session.is_alive()}"
-    )
-    return SessionInfo(session_id=session.session_id, cwd=session.cwd)
+        f"Created session {session.session_id} at {session.cwd}, fd={session._fd}, alive={session.is_alive()}, chat_id={session.chat_id}")
+    return SessionInfo(session_id=session.session_id, cwd=session.cwd, chat_id=session.chat_id)
 
 
 @router.get("", response_model=List[SessionInfo])
-async def list_sessions():
-    """List active terminal sessions."""
-    sessions = manager.list_sessions()
-    logger.debug(f"Listing sessions: {len(sessions)} active")
+async def list_sessions(chat_id: str | None = None):
+    """Listar sesiones activas de terminal.
+
+    Si se pasa chat_id, filtra solo sesiones asociadas a ese contexto.
+    Backward compatible: null lista todas las sesiones globales (sin contesto).
+    """
+    sessions = manager.list_sessions(chat_id=chat_id)
+    logger.debug(f"Listing sessions {chat_id}: {len(sessions)} active")
     return [SessionInfo(**s) for s in sessions]
 
 
 @router.get("/sessions", response_model=List[CommandSessionInfo])
 async def list_command_session_endpoint(workspace: str | None = None, chat_id: str | None = None):
-    """List live command sessions created by run_command."""
-    return [CommandSessionInfo(**s) for s in list_command_sessions(workspace, chat_id)]
+    """Listar sesiones live creadas por run_command con filtro workspace y chart_id opcional."""
+    return [CommandSessionInfo(**s) for s in list_command_sessions(workspace, chat_id=chat_id)]
 
 
 @router.delete("/{session_id}")
 async def delete_session(session_id: str):
-    """Kill a terminal session."""
+    """Destruir terminal PTY manual."""
     logger.info(f"Deleting session {session_id}")
     if not manager.close(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
@@ -94,7 +103,7 @@ async def delete_session(session_id: str):
 async def command_session_ws(websocket: WebSocket, command_session_id: str):
     """WebSocket endpoint for command-session I/O.
 
-    Uses the same compact binary client protocol as normal terminals:
+    Uses same compact binary client protocol as normal terminals:
         0x00 + raw input bytes
         0x02 + uint16 cols + uint16 rows
         0x03 stop
@@ -225,8 +234,7 @@ async def terminal_ws(websocket: WebSocket, session_id: str):
 
     await websocket.accept()
     logger.info(
-        f"WebSocket connected for session {session_id}, fd={session._fd}, alive={session.is_alive()}"
-    )
+        f"WebSocket connected for session {session_id}, fd={session._fd}, alive={session.is_alive()}, chat_id={session.chat_id}")
 
     # Replay scrollback buffer so reconnecting clients see history
     scrollback = session.get_scrollback()
@@ -325,7 +333,7 @@ async def terminal_ws(websocket: WebSocket, session_id: str):
                         resize_data = _json.loads(payload)
                         cols = resize_data.get("cols", 80)
                         rows = resize_data.get("rows", 24)
-                    logger.debug(f"Resize {session_id}: {cols}x{rows}")
+                    logger.debug(f"Resize {session_id}: {cols}x{rows}, chat_id={session.chat_id}")
                     session.resize(rows, cols)
                 except (ValueError, KeyError) as e:
                     logger.warning(f"Invalid resize payload for {session_id}: {e}")
