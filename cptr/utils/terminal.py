@@ -24,13 +24,22 @@ class TerminalUnavailable(RuntimeError):
 
 @dataclass
 class TerminalSession:
-    """Platform-agnostic terminal session with scrollback buffer."""
+    """Platform-agnostic terminal session with scrollback buffer.
+
+    Auto-asociación: terminal se asocia automáticamente al workspace/chat activo
+    cuando se crea con context adecuado (si se pasa param opcional chat_id).
+    Usa field repr=False para no incluir en debug string visualización (ahorro de espacio) .
+    """
 
     session_id: str
     cwd: str
     rows: int = 24
     cols: int = 80
     _scrollback: bytearray = field(default_factory=bytearray, repr=False)
+
+    # Contexto de chat (opcional para asociar terminal manualmente a un workspace activo).
+    # Se usa para mostrar sesión en modal status y filtros UI frontend.
+    chat_id: Optional[str] = field(default=None, repr=False)  # ← NUEVO Opcional null por defecto
 
     # Platform handles
     _fd: int = -1  # Unix: master pty fd
@@ -109,7 +118,9 @@ class TerminalSession:
 
 
 def _create_unix(
-    session_id: str, shell: str, work_dir: str, env: dict, rows: int, cols: int
+    session_id: str,
+    shell: str, work_dir: str, env: dict, rows: int, cols: int,
+    chat_id: Optional[str] = None  # ← NUEVO PARAM OPCIONAL PASE AL MANAGER CREATE()
 ) -> TerminalSession:
     """Create a terminal session on Unix using stdlib pty."""
     import fcntl
@@ -191,11 +202,15 @@ def _create_unix(
             cols=cols,
             _fd=master_fd,
             _pid=child_pid,
+            _process=None,  # ← No usado en Unix, field vacío
+            chat_id=chat_id,  # ← PASA CONTEXT Opcional para UI asociación automática
         )
 
 
 def _create_windows(
-    session_id: str, shell: str, work_dir: str, env: dict, rows: int, cols: int
+    session_id: str,
+    shell: str, work_dir: str, env: dict, rows: int, cols: int,
+    chat_id: Optional[str] = None  # ← NUEVO PARAM OPCIONAL PASE AL MANAGER CREATE()
 ) -> TerminalSession:
     """Create a terminal session on Windows using pywinpty."""
     try:
@@ -219,17 +234,32 @@ def _create_windows(
         cwd=work_dir,
         rows=rows,
         cols=cols,
-        _process=proc,
+        _process=proc,  # ← Handle Windows PTY (winpty)
+        chat_id=chat_id,  # ← PASA CONTEXT Opcional para UI asociación automática
     )
 
 
 class SessionManager:
-    """Registry of active terminal sessions."""
+    """Registry of active terminal sessions.
+
+    Auto-asociación opcional: crea sesión manual con auto-assignación chat_id 
+    basado en workspace activo cuando se pasa parámetro opcional.
+    """
 
     def __init__(self) -> None:
         self._sessions: Dict[str, TerminalSession] = {}
 
-    def create(self, rows: int = 24, cols: int = 80, cwd: Optional[str] = None) -> TerminalSession:
+    def create(
+        self,
+        rows: int = 24, cols: int = 80,
+        cwd: Optional[str] = None,
+        chat_id: Optional[str] = None  # ← NUEVO param opcional para auto-asociar al workspace activo
+    ) -> TerminalSession:
+        """Crear terminal PTY manual con opcion de asociar a chatId context.
+
+        Si user no pasa nada, crea terminal global sin contexto (chat_id=None) por defecto.
+        Si pasa workspace/chatId, auto-assigna en session.session.chat_id para UI filter/listar.
+        """
         session_id = uuid.uuid4().hex[:12]
         work_dir = cwd or os.path.expanduser("~")
 
@@ -240,15 +270,15 @@ class SessionManager:
 
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
-        env["COLORTERM"] = "truecolor"
+        env["COLORTERM"] = "true color"
         env["COLUMNS"] = str(cols)
         env["LINES"] = str(rows)
         env["PWD"] = work_dir
 
         if IS_WINDOWS:
-            session = _create_windows(session_id, shell, work_dir, env, rows, cols)
+            session = _create_windows(session_id, shell, work_dir, env, rows, cols, chat_id=chat_id)
         else:
-            session = _create_unix(session_id, shell, work_dir, env, rows, cols)
+            session = _create_unix(session_id, shell, work_dir, env, rows, cols, chat_id=chat_id)
 
         self._sessions[session_id] = session
         return session
@@ -261,14 +291,24 @@ class SessionManager:
             return None
         return session
 
-    def list_sessions(self) -> List[dict]:
+    def list_sessions(self, chat_id: Optional[str] = None) -> List[dict]:
         result = []
         dead = []
         for sid, session in self._sessions.items():
-            if session.is_alive():
-                result.append({"session_id": sid, "cwd": session.cwd})
-            else:
+            if not session.is_alive():
                 dead.append(sid)
+                continue
+
+            entry = {"session_id": sid, "cwd": session.cwd}
+
+            # ← Filtrar por chat_id si se especifica y sesión tiene asociado.
+            # Si chat_id es None (lista ALL sessions globales) o coincide con session.chat_id.
+            if (chat_id is not None and 
+                (session.chat_id == None or session.chat_id != chat_id)):
+                continue
+
+            result.append(entry)
+
         for sid in dead:
             self._sessions[sid].close()
             del self._sessions[sid]
