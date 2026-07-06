@@ -1887,6 +1887,26 @@ async def search_chats(
     )
 
 
+async def notify(message: str, target: str = "", title: str = "", *, __context__: dict) -> str:
+    """Send a notification to a user notification target.
+
+    :param message: Message body to send.
+    :param target: Optional notification target ID from Settings > Notifications. Uses the default target when omitted.
+    :param title: Optional notification title.
+    """
+    user_id = __context__.get("user_id")
+    if not user_id:
+        return "Error: authentication required."
+    try:
+        from cptr.utils.notifications import NotificationError, notify_target
+
+        return await notify_target(user_id, message, target or None, title or None)
+    except NotificationError as exc:
+        return f"Error: {exc}"
+    except Exception as exc:
+        return f"Error: failed to send notification: {exc}"
+
+
 # ── Registry ────────────────────────────────────────────────
 
 TOOLS: dict[str, dict] = {
@@ -1912,6 +1932,7 @@ TOOLS: dict[str, dict] = {
     "update_automation": {"fn": update_automation, "auto": False},
     "toggle_automation": {"fn": toggle_automation, "auto": False},
     "delete_automation": {"fn": delete_automation, "auto": False},
+    "notify": {"fn": notify, "auto": False},
     "image_generate": {"fn": image_generate, "auto": False},
     "update_memory": {"fn": update_memory, "auto": True},
 }

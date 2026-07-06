@@ -11,6 +11,7 @@ import logging
 import re
 import uuid
 
+from cptr.events import EVENTS, publish_event
 from cptr.env import CHAT_MAX_ITERATIONS, CHAT_TOOL_COMMAND_MAX_CHARS, CHAT_TOOL_MAX_CHARS
 from cptr.utils.context import resolve_compact_token_threshold, should_compact
 from cptr.utils.skills import discover_skills, load_skill, format_skill_content
@@ -1182,6 +1183,10 @@ async def run_chat_task(
             workspace_name=ws_name,
         )
 
+    event_workspace = (
+        {"id": workspace, "name": workspace.rstrip("/").rsplit("/", 1)[-1]} if workspace else None
+    )
+
     # Load existing state so continuations don't overwrite previous output
     msg = await ChatMessage.get_by_id(message_id)
     summary_message_id = message_id
@@ -1270,6 +1275,7 @@ async def run_chat_task(
     async def _run_agent_target(agent_target: AgentModelTarget):
         nonlocal content, text_buffer
         from cptr.utils.agents.claude_code import run_claude_code_agent
+        from cptr.utils.agents.cline import run_cline_agent
         from cptr.utils.agents.codex import run_codex_agent
         from cptr.utils.agents.cursor import run_cursor_agent
         from cptr.utils.agents.grok import run_grok_agent
@@ -1322,6 +1328,7 @@ async def run_chat_task(
             "cursor": run_cursor_agent,
             "grok": run_grok_agent,
             "opencode": run_opencode_agent,
+            "cline": run_cline_agent,
         }
         runner = runners.get(agent_target.agent)
         if runner is None:
@@ -1493,6 +1500,16 @@ async def run_chat_task(
                 )
                 _task_state.pop(message_id, None)
                 await _emit_done()
+                preview = content[:300] if content else ""
+                await publish_event(
+                    EVENTS.CHAT_FINISHED,
+                    actor={"id": user_id},
+                    subject_id=chat_id,
+                    subject_type="chat",
+                    source="chat_task",
+                    data={"workspace": event_workspace, "preview": preview},
+                    message=preview,
+                )
                 return
 
         flushed_item = _flush_text()
@@ -1501,6 +1518,16 @@ async def run_chat_task(
         await _save_message("agent stream ended", content=content, output=output_items, done=True)
         _task_state.pop(message_id, None)
         await _emit_done()
+        preview = content[:300] if content else ""
+        await publish_event(
+            EVENTS.CHAT_FINISHED,
+            actor={"id": user_id},
+            subject_id=chat_id,
+            subject_type="chat",
+            source="chat_task",
+            data={"workspace": event_workspace, "preview": preview},
+            message=preview,
+        )
         return
 
     try:
@@ -1776,30 +1803,8 @@ async def run_chat_task(
                     last_usage = usage
                     new_messages_since = 0
 
-                    if not pending_calls:
-                        # No tool calls — final response, we're done
-                        _flush_text()
-                        if streamed_reasoning_chars and not response_reasoning_items:
-                            logger.warning(
-                                "[task %s] reasoning output streamed (%d chars) but no completed reasoning item arrived before usage; DB output may contain only in-progress reasoning",
-                                message_id[:8],
-                                streamed_reasoning_chars,
-                            )
-                        await _save_message(
-                            "usage",
-                            content=content,
-                            output=output_items,
-                            usage=usage,
-                            done=True,
-                        )
-                        _task_state.pop(message_id, None)
-                        await _emit_done()
-                        return
-
                 elif event["type"] == "done":
-                    # Stream ended — if usage already triggered a save+return, we won't
-                    # reach here. This is the fallback for providers that don't support
-                    # stream_options.include_usage.
+                    # Stream ended. Usage may have arrived earlier, multiple times, or never.
                     if not pending_calls:
                         _flush_text()
                         if streamed_reasoning_chars and not response_reasoning_items:
@@ -1809,7 +1814,7 @@ async def run_chat_task(
                                 streamed_reasoning_chars,
                             )
                         await _save_message(
-                            "done fallback",
+                            "done",
                             content=content,
                             output=output_items,
                             usage=last_usage,
@@ -1817,6 +1822,16 @@ async def run_chat_task(
                         )
                         _task_state.pop(message_id, None)
                         await _emit_done()
+                        preview = content[:300] if content else ""
+                        await publish_event(
+                            EVENTS.CHAT_FINISHED,
+                            actor={"id": user_id},
+                            subject_id=chat_id,
+                            subject_type="chat",
+                            source="chat_task",
+                            data={"workspace": event_workspace, "preview": preview},
+                            message=preview,
+                        )
                         return
 
             # ── Process collected tool calls ────────────────────
@@ -1873,7 +1888,7 @@ async def run_chat_task(
                     )
                     if flushed_item:
                         await emit(output=flushed_item)
-                    await emit(output=item)
+                        await emit(output=item)
                     _task_state.pop(message_id, None)
                     await emit(done=True)
                     return
@@ -2028,10 +2043,21 @@ async def run_chat_task(
                     "end",
                     content=content,
                     output=output_items,
+                    usage=last_usage,
                     done=True,
                 )
                 _task_state.pop(message_id, None)
                 await _emit_done()
+                preview = content[:300] if content else ""
+                await publish_event(
+                    EVENTS.CHAT_FINISHED,
+                    actor={"id": user_id},
+                    subject_id=chat_id,
+                    subject_type="chat",
+                    source="chat_task",
+                    data={"workspace": event_workspace, "preview": preview},
+                    message=preview,
+                )
                 return
 
         # Max iterations reached
@@ -2044,6 +2070,15 @@ async def run_chat_task(
         )
         _task_state.pop(message_id, None)
         await _emit_done()
+        await publish_event(
+            EVENTS.CHAT_FAILED,
+            actor={"id": user_id},
+            subject_id=chat_id,
+            subject_type="chat",
+            source="chat_task",
+            data={"workspace": event_workspace, "preview": "Max iterations reached."},
+            message="Max iterations reached.",
+        )
 
     except asyncio.CancelledError:
         _flush_text()
@@ -2085,6 +2120,15 @@ async def run_chat_task(
         )
         _task_state.pop(message_id, None)
         await emit(done=True, error=error_msg)
+        await publish_event(
+            EVENTS.CHAT_FAILED,
+            actor={"id": user_id},
+            subject_id=chat_id,
+            subject_type="chat",
+            source="chat_task",
+            data={"workspace": event_workspace, "preview": error_msg[:300] if error_msg else ""},
+            message=error_msg[:300] if error_msg else "",
+        )
     finally:
         # Guarantee the gateway SSE stream terminates.  If emit()
         # already pushed a done/error event the sentinel is harmless
@@ -2128,18 +2172,6 @@ async def run_chat_task(
             logger.debug(
                 "[title] Error in title generation for chat %s", chat_id[:8], exc_info=True
             )
-        # Fire webhook notification if configured
-        try:
-            webhook_url = await Config.get("notifications.webhook_url")
-            if webhook_url:
-                chat_obj = chat_obj or await Chat.get_by_id(chat_id)
-                title = chat_obj.title if chat_obj else "Chat"
-                preview = content[:300] if content else ""
-                from cptr.utils.webhook import post_webhook
-
-                await post_webhook(webhook_url, title, preview)
-        except Exception:
-            logger.debug("[webhook] Error sending webhook for chat %s", chat_id[:8], exc_info=True)
         # Best-effort post-turn memory review. Runs detached and never competes
         # with queued user input processing.
         try:
