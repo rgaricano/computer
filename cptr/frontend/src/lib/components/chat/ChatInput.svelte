@@ -132,6 +132,13 @@
 				: $t('chat.voiceModeOn')
 	);
 
+	function isMobileInput(): boolean {
+		return (
+			typeof window !== 'undefined' &&
+			window.matchMedia('(hover: none) and (pointer: coarse)').matches
+		);
+	}
+
 	// ── Lowlight setup ──────────────────────────────
 	const lowlight = createLowlight(all);
 	const _origHighlight = lowlight.highlight.bind(lowlight);
@@ -313,6 +320,7 @@
 					return true;
 				}
 				if (event.key === 'Enter') {
+					if (isMobileInput()) return false;
 					const item = currentItems[selectedIndex];
 					if (item && command) command(item);
 					return true;
@@ -477,6 +485,7 @@
 					return true;
 				}
 				if (event.key === 'Enter') {
+					if (isMobileInput()) return false;
 					const item = currentItems[selectedIndex];
 					if (item && command) command(item);
 					return true;
@@ -554,6 +563,8 @@
 					spellcheck: 'true'
 				},
 				handleKeyDown: (view, event) => {
+					if (event.key === 'Enter' && isMobileInput()) return false;
+
 					if (showSlashCommands) {
 						if (event.key === 'ArrowDown') {
 							event.preventDefault();
@@ -939,7 +950,7 @@
 		}
 	});
 
-	const slashCommandQuery = $derived(inputText.trim().toLowerCase());
+	const slashCommandQuery = $derived(inputText.trimStart().toLowerCase());
 	const slashCommandIds = $derived.by(() => {
 		if (!slashCommandQuery.startsWith('/')) return [];
 		const ids: string[] = [];
@@ -979,7 +990,7 @@
 	$effect(() => {
 		const query = slashCommandQuery;
 		const requestId = ++slashSkillsRequestId;
-		if (!query.startsWith('/') || !workspace) {
+		if (!query.startsWith('/') || /\s/.test(query.slice(1)) || !workspace) {
 			slashSkillSuggestions = [];
 			return;
 		}
