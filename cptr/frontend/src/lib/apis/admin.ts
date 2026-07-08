@@ -60,7 +60,7 @@ export const updateConfig = (config: Record<string, unknown>) =>
 
 // ── Agents ─────────────────────────────────────────────────
 
-export type AgentType = 'codex' | 'claude_code' | 'cursor' | 'grok' | 'opencode';
+export type AgentType = 'codex' | 'claude_code' | 'cursor' | 'grok' | 'opencode' | 'cline';
 export type AgentMode = 'auto' | 'enabled' | 'disabled';
 export type AgentStatus = 'ready' | 'not_found' | 'missing_dependency' | 'auth_unknown' | 'error';
 
@@ -170,6 +170,7 @@ export interface ModelConfigEntry {
 		request_params?: Record<string, unknown>;
 		system_prompt?: string;
 		compact_token_threshold?: number;
+		builtin_tools?: Record<string, boolean> | null;
 	};
 }
 

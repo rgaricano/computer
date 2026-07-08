@@ -17,7 +17,7 @@ class AcpClient:
         args: list[str],
         cwd: str,
         env: dict[str, str],
-        auth_method_id: str,
+        auth_method_id: str | None,
         client_capabilities: dict[str, Any] | None = None,
         resume_session_id: str | None = None,
         auto_approve_permissions: bool = False,
@@ -33,10 +33,11 @@ class AcpClient:
         self.proc: asyncio.subprocess.Process | None = None
         self.reader_task: asyncio.Task | None = None
         self.stderr_task: asyncio.Task | None = None
-        self.pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self.pending: dict[Any, asyncio.Future[dict[str, Any]]] = {}
         self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.next_id = 1
         self.session_id: str | None = None
+        self.initialize_result: dict[str, Any] = {}
         self.setup_result: dict[str, Any] = {}
         self.model_config_id: str | None = None
 
@@ -52,7 +53,7 @@ class AcpClient:
         )
         self.reader_task = asyncio.create_task(self._reader_loop())
         self.stderr_task = asyncio.create_task(self._stderr_loop())
-        await self.request(
+        self.initialize_result = await self.request(
             "initialize",
             {
                 "protocolVersion": 1,
@@ -64,7 +65,9 @@ class AcpClient:
                 "clientInfo": {"name": "cptr", "version": "0"},
             },
         )
-        await self.request("authenticate", {"methodId": self.auth_method_id})
+        auth_method_id = self.auth_method_id or _first_auth_method(self.initialize_result)
+        if auth_method_id:
+            await self.request("authenticate", {"methodId": auth_method_id})
         await self._open_session()
 
     async def close(self) -> None:
@@ -194,7 +197,7 @@ class AcpClient:
             and ("result" in message or "error" in message)
             and "method" not in message
         ):
-            future = self.pending.pop(int(message["id"]), None)
+            future = self.pending.pop(message["id"], None)
             if future and not future.done():
                 future.set_result(message)
             return
@@ -202,11 +205,11 @@ class AcpClient:
         method = message.get("method")
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
         if "id" in message and method == "session/request_permission":
-            await self._reply_permission(int(message["id"]), params)
+            await self._reply_permission(message["id"], params)
             return
         await self.events.put(message)
 
-    async def _reply_permission(self, request_id: int, params: dict[str, Any]) -> None:
+    async def _reply_permission(self, request_id: Any, params: dict[str, Any]) -> None:
         option_id = None
         if self.auto_approve_permissions:
             option_id = _select_permission_option(
@@ -267,6 +270,18 @@ def _extract_model_config_id(setup: dict[str, Any]) -> str | None:
             option_id = option.get("id")
             if isinstance(option_id, str) and option_id.strip():
                 return option_id.strip()
+    return None
+
+
+def _first_auth_method(initialize_result: dict[str, Any]) -> str | None:
+    methods = initialize_result.get("authMethods")
+    if not isinstance(methods, list):
+        return None
+    for method in methods:
+        if isinstance(method, dict):
+            method_id = method.get("id")
+            if isinstance(method_id, str) and method_id.strip():
+                return method_id.strip()
     return None
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import mimetypes
 import os
 import time
 import uuid
@@ -51,6 +52,11 @@ command_sessions: dict[str, dict] = {}
 # }
 MAX_COMMAND_SESSIONS = 5
 _MAX_LOG_SIZE = 50 * 1024 * 1024  # 50MB — rotate when exceeded
+
+VALID_TASK_STATUSES = {"pending", "in_progress", "completed", "cancelled"}
+MAX_TASK_ITEMS = 256
+MAX_TASK_CONTENT_CHARS = 4000
+_TASK_TRUNCATION_MARKER = "... [truncated]"
 
 
 def _spawn_pty(command: str, cwd: str, env: dict) -> tuple:
@@ -231,6 +237,37 @@ def _human_size(size: int) -> str:
             return f"{size}{unit}" if unit == "B" else f"{size:.1f}{unit}"
         size /= 1024
     return f"{size:.1f}TB"
+
+
+def _file_kind(path: Path, mime_type: str) -> str:
+    ext = path.suffix.lower()
+    if mime_type.startswith("image/"):
+        return "image"
+    if mime_type.startswith("audio/"):
+        return "audio"
+    if mime_type.startswith("video/"):
+        return "video"
+    if mime_type == "application/pdf":
+        return "pdf"
+    if ext in {".md", ".markdown", ".mdx"}:
+        return "markdown"
+    if ext in {".json", ".jsonc", ".json5"}:
+        return "json"
+    if ext in {".csv", ".tsv"}:
+        return "csv"
+    if ext in {".html", ".htm"}:
+        return "html"
+    if ext == ".svg":
+        return "svg"
+    if ext in {".txt", ".log", ".diff", ".patch"} or mime_type.startswith("text/"):
+        return "text"
+    if ext in {".docx", ".xlsx", ".xls", ".pptx"}:
+        return "office"
+    if ext in {".sqlite", ".sqlite3", ".db", ".db3"}:
+        return "sqlite"
+    if ext in {".zip", ".tar", ".gz", ".tgz", ".rar", ".7z"}:
+        return "archive"
+    return "binary"
 
 
 def _truncate_output(text: str, max_chars: int = 80_000) -> str:
@@ -799,6 +836,131 @@ async def create_artifact(
     )
 
 
+def _normalize_tasks(tasks: Any, existing_tasks: Any = None, merge: bool = False) -> list[dict]:
+    if isinstance(tasks, str):
+        try:
+            tasks = json.loads(tasks)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if not isinstance(tasks, list):
+        return []
+
+    existing = _normalize_tasks(existing_tasks) if merge else []
+    by_id: dict[str, dict] = {task["id"]: task for task in existing}
+    order: list[str] = [task["id"] for task in existing]
+    next_index = len(order)
+    for item in tasks:
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("id", "") or "").strip()
+        current = by_id.get(task_id) if merge and task_id else None
+        content_value = item.get("content")
+        content = str(content_value).strip() if content_value is not None else ""
+        if len(content) > MAX_TASK_CONTENT_CHARS:
+            keep = MAX_TASK_CONTENT_CHARS - len(_TASK_TRUNCATION_MARKER)
+            content = content[:keep] + _TASK_TRUNCATION_MARKER
+        if current and not content:
+            content = current["content"]
+        if not content:
+            continue
+        status = str(item.get("status", current.get("status") if current else "pending")).lower()
+        if status not in VALID_TASK_STATUSES:
+            status = "pending"
+        task_id = task_id or str(next_index + 1)
+        if task_id in by_id and task_id in order:
+            order.remove(task_id)
+        else:
+            next_index += 1
+        by_id[task_id] = {"id": task_id, "content": content, "status": status}
+        order.append(task_id)
+    return [by_id[task_id] for task_id in order][:MAX_TASK_ITEMS]
+
+
+async def update_tasks(
+    tasks: list[dict[str, Any]],
+    merge: bool = False,
+    *,
+    __context__: dict,
+) -> str:
+    """Update the visible Tasks list for this chat.
+    :param tasks: Task items to show. Each item may include id, content, and status.
+    :param merge: If true, update existing tasks by id and append new ones. If false, replace the list.
+    """
+    from cptr.models import Chat
+    from cptr.socket.main import emit_to_user
+    from cptr.utils.config import now_ms
+
+    chat_id = __context__.get("chat_id")
+    user_id = __context__.get("user_id")
+    if not chat_id:
+        return json.dumps({"error": "Chat context not available"})
+
+    chat = await Chat.get_by_id(chat_id)
+    if not chat:
+        return json.dumps({"error": "Chat not found"})
+
+    meta = dict(chat.meta or {})
+    next_tasks = _normalize_tasks(tasks, meta.get("tasks"), merge=merge)
+    summary = {
+        "total": len(next_tasks),
+        "pending": sum(1 for task in next_tasks if task["status"] == "pending"),
+        "in_progress": sum(1 for task in next_tasks if task["status"] == "in_progress"),
+        "completed": sum(1 for task in next_tasks if task["status"] == "completed"),
+        "cancelled": sum(1 for task in next_tasks if task["status"] == "cancelled"),
+    }
+    meta["tasks"] = next_tasks
+    await Chat.update_meta(chat_id, meta, now_ms())
+
+    if user_id:
+        await emit_to_user(
+            user_id,
+            {
+                "type": "chat:tasks",
+                "chat_id": chat_id,
+                "message_id": __context__.get("message_id"),
+                "tasks": next_tasks,
+                "summary": summary,
+            },
+        )
+
+    return json.dumps({"tasks": next_tasks, "summary": summary}, ensure_ascii=False)
+
+
+async def clear_active_tasks(
+    chat_id: str, user_id: str | None = None, message_id: str | None = None
+) -> None:
+    from cptr.models import Chat
+    from cptr.socket.main import emit_to_user
+    from cptr.utils.config import now_ms
+
+    chat = await Chat.get_by_id(chat_id)
+    if not chat:
+        return
+    meta = dict(chat.meta or {})
+    tasks = _normalize_tasks(meta.get("tasks"))
+    if not any(task["status"] in {"pending", "in_progress"} for task in tasks):
+        return
+    meta["tasks"] = []
+    await Chat.update_meta(chat_id, meta, now_ms())
+    if user_id:
+        await emit_to_user(
+            user_id,
+            {
+                "type": "chat:tasks",
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "tasks": [],
+                "summary": {
+                    "total": 0,
+                    "pending": 0,
+                    "in_progress": 0,
+                    "completed": 0,
+                    "cancelled": 0,
+                },
+            },
+        )
+
+
 async def write_file(path: str, content: str, *, workspace: str) -> str:
     """Write or create a file (full content). Prefer edit_file for modifications.
     :param path: Path relative to workspace root.
@@ -814,6 +976,48 @@ async def write_file(path: str, content: str, *, workspace: str) -> str:
 
     await asyncio.to_thread(_write)
     return f"Wrote {len(content)} bytes to {path}"
+
+
+async def display_file(path: str, *, workspace: str) -> str:
+    """Display a workspace file inline in chat.
+    Use when the user asks to see, preview, render, or display a file you created or found.
+    :param path: Path relative to workspace root.
+    """
+    if not path:
+        return "Error: path is required."
+
+    try:
+        full = _resolve_path(path, workspace)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    if _is_dotenv(full):
+        return _DOTENV_ERROR
+    if not full.exists():
+        return f"Error: file not found: {path}"
+    if not full.is_file():
+        return f"Error: not a file: {path}"
+
+    stat = await asyncio.to_thread(full.stat)
+    mime_type = mimetypes.guess_type(str(full))[0] or "application/octet-stream"
+    ws = Path(workspace).resolve()
+    try:
+        display_path = str(full.relative_to(ws))
+    except ValueError:
+        display_path = str(full)
+    return json.dumps(
+        {
+            "type": "file",
+            "path": display_path,
+            "full_path": str(full),
+            "workspace": str(ws),
+            "name": full.name,
+            "size": stat.st_size,
+            "mime_type": mime_type,
+            "kind": _file_kind(full, mime_type),
+        },
+        ensure_ascii=False,
+    )
 
 
 async def edit_file(
@@ -1407,7 +1611,11 @@ async def view_skill(
     """Load the full instructions and resource listing for an available skill.
     :param skill_name: The name of the skill to load (from the <available_skills> catalog).
     """
-    from cptr.utils.skills import load_skill, format_skill_content
+    from cptr.models import Config
+    from cptr.utils.skills import bump_skill_view, load_skill, format_skill_content
+
+    if (await Config.get("skills.enabled")) in (False, "false", "0"):
+        return "Error: skills are disabled by the administrator."
 
     # Deduplication: if already activated, return short notice
     if skill_name in _activated_skills:
@@ -1418,7 +1626,63 @@ async def view_skill(
         return f"Error: skill '{skill_name}' not found. Check <available_skills> for valid names."
 
     _activated_skills.add(skill_name)
+    bump_skill_view(workspace, skill_name, skill.source)
     return format_skill_content(skill)
+
+
+async def manage_skill(
+    action: Literal["create", "update", "write_file", "delete"],
+    name: str,
+    content: Optional[str] = None,
+    scope: Literal["workspace", "global"] = "workspace",
+    file_path: Optional[str] = None,
+    file_content: Optional[str] = None,
+    *,
+    __context__: dict,
+) -> str:
+    """Create, update, or delete Computer-managed skills and supporting bundle files.
+
+    Use this only when the user asks to create, update, or delete a reusable skill.
+    New skills default to the current workspace. For supporting files, write only
+    under references/, templates/, scripts/, or assets/.
+    :param action: "create" to write SKILL.md, "update" to replace SKILL.md, "write_file" to add a bundle file, or "delete" to remove a managed skill.
+    :param name: Lowercase hyphenated skill name.
+    :param content: Full SKILL.md content for action="create" or action="update".
+    :param scope: "workspace" for .cptr/skills, or "global" for ~/.cptr/skills.
+    :param file_path: Relative bundle path for action="write_file".
+    :param file_content: File content for action="write_file".
+    """
+    from cptr.utils.skills import (
+        create_managed_skill,
+        delete_managed_skill,
+        update_managed_skill,
+        write_managed_skill_file,
+    )
+    from cptr.models import Config
+
+    if (await Config.get("skills.enabled")) in (False, "false", "0"):
+        return json.dumps({"success": False, "error": "skills are disabled"}, ensure_ascii=False)
+    if (await Config.get("skills.tool_enabled")) in (False, "false", "0"):
+        return json.dumps(
+            {"success": False, "error": "skill management is disabled"},
+            ensure_ascii=False,
+        )
+
+    workspace = __context__.get("workspace", "")
+    try:
+        if action == "create":
+            result = create_managed_skill(workspace, name, content or "", scope)
+        elif action == "update":
+            result = update_managed_skill(workspace, name, content or "")
+        elif action == "write_file":
+            result = write_managed_skill_file(workspace, name, file_path or "", file_content)
+        elif action == "delete":
+            result = delete_managed_skill(workspace, name)
+        else:
+            result = {"success": False, "error": f"unsupported action '{action}'"}
+    except Exception as e:
+        result = {"success": False, "error": str(e)}
+    return json.dumps(result, ensure_ascii=False)
 
 
 # ── Browser tools ────────────────────────────────────────────
@@ -1589,6 +1853,8 @@ async def image_generate(
     __context__: dict,
 ) -> str:
     """Generate or edit image files from a prompt.
+    Returns saved image file paths. You must call display_file next for each returned path
+    before responding to the user.
     :param prompt: Detailed description of the image to create or the edits to make.
     :param image: Optional source image file id, /api/files/... URL, or workspace path for edit mode.
     :param images: Optional source image file ids, /api/files/... URLs, or workspace paths for edit mode.
@@ -1887,6 +2153,26 @@ async def search_chats(
     )
 
 
+async def notify(message: str, target: str = "", title: str = "", *, __context__: dict) -> str:
+    """Send a notification to a user notification target.
+
+    :param message: Message body to send.
+    :param target: Optional notification target ID from Settings > Notifications. Uses the default target when omitted.
+    :param title: Optional notification title.
+    """
+    user_id = __context__.get("user_id")
+    if not user_id:
+        return "Error: authentication required."
+    try:
+        from cptr.utils.notifications import NotificationError, notify_target
+
+        return await notify_target(user_id, message, target or None, title or None)
+    except NotificationError as exc:
+        return f"Error: {exc}"
+    except Exception as exc:
+        return f"Error: failed to send notification: {exc}"
+
+
 # ── Registry ────────────────────────────────────────────────
 
 TOOLS: dict[str, dict] = {
@@ -1900,8 +2186,10 @@ TOOLS: dict[str, dict] = {
     "search_chats": {"fn": search_chats, "auto": True},
     "list_automations": {"fn": list_automations, "auto": True},
     "view_skill": {"fn": view_skill, "auto": True},
+    "update_tasks": {"fn": update_tasks, "auto": True},
     # Write / mutate (require approval unless auto_approve_all)
     "create_file": {"fn": create_file, "auto": False},
+    "display_file": {"fn": display_file, "auto": False},
     "edit_file": {"fn": edit_file, "auto": False},
     "multi_edit_file": {"fn": multi_edit_file, "auto": False},
     "write_file": {"fn": write_file, "auto": False},
@@ -1912,7 +2200,9 @@ TOOLS: dict[str, dict] = {
     "update_automation": {"fn": update_automation, "auto": False},
     "toggle_automation": {"fn": toggle_automation, "auto": False},
     "delete_automation": {"fn": delete_automation, "auto": False},
+    "notify": {"fn": notify, "auto": False},
     "image_generate": {"fn": image_generate, "auto": False},
+    "manage_skill": {"fn": manage_skill, "auto": False},
     "update_memory": {"fn": update_memory, "auto": True},
 }
 
@@ -1948,10 +2238,10 @@ async def _get_subagent_config() -> dict:
     from cptr.models import Config
 
     return {
-        "max_concurrent": int(await Config.get("subagents.max_concurrent") or 3),
+        "max_concurrent": int(await Config.get("subagents.max_concurrent") or 20),
         "background_enabled": (await Config.get("subagents.background_enabled"))
         in (True, "true", "1"),
-        "max_async": int(await Config.get("subagents.max_async") or 3),
+        "max_async": int(await Config.get("subagents.max_async") or 20),
         "max_iterations": int(await Config.get("subagents.max_iterations") or 30),
         "max_output": int(await Config.get("subagents.max_output") or 30_000),
         "system_prompt": (await Config.get("subagents.system_prompt")) or _DEFAULT_SUBAGENT_SYSTEM,
@@ -2051,8 +2341,20 @@ async def delegate_task(
             }
         )
 
+    if config["max_concurrent"] == -1:
+        return await _run_subagent_chat(
+            task=task,
+            context=context,
+            workspace=__context__["workspace"],
+            connection=__context__["connection"],
+            model=__context__["model_id"],
+            user_id=__context__["user_id"],
+            parent_chat_id=__context__["chat_id"],
+            config=config,
+        )
+
     if _subagent_semaphore is None:
-        _subagent_semaphore = asyncio.Semaphore(config["max_concurrent"])
+        _subagent_semaphore = asyncio.Semaphore(max(1, config["max_concurrent"]))
 
     async with _subagent_semaphore:
         return await _run_subagent_chat(
@@ -2193,6 +2495,58 @@ SUBAGENT_TOOLS: dict[str, dict] = {
 
 # Combined lookup for execution and approval (always available regardless of config)
 ALL_TOOLS: dict[str, dict] = {**TOOLS, **BROWSER_TOOLS, **SUBAGENT_TOOLS}
+
+BUILTIN_TOOL_GROUPS: dict[str, tuple[str, ...]] = {
+    "files": (
+        "read_file",
+        "list_directory",
+        "search_files",
+        "create_file",
+        "display_file",
+        "edit_file",
+        "multi_edit_file",
+        "write_file",
+    ),
+    "terminal": ("run_command", "send_input", "check_task", "kill_task"),
+    "web": ("web_search", "read_url"),
+    "browser": (
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_screenshot",
+        "browser_evaluate",
+    ),
+    "memory": ("update_memory",),
+    "chats": ("search_chats",),
+    "skills": ("view_skill", "manage_skill"),
+    "tasks": ("update_tasks",),
+    "automations": (
+        "list_automations",
+        "create_automation",
+        "update_automation",
+        "toggle_automation",
+        "delete_automation",
+    ),
+    "images": ("image_generate",),
+    "subagents": ("delegate_task",),
+    "notifications": ("notify",),
+}
+
+
+def disabled_builtin_tool_names(builtin_tools: dict | None) -> set[str]:
+    """Return builtin tool names disabled by group config."""
+    if not isinstance(builtin_tools, dict):
+        return set()
+    disabled: set[str] = set()
+    for group, enabled in builtin_tools.items():
+        if enabled is False:
+            disabled.update(BUILTIN_TOOL_GROUPS.get(group, ()))
+    return disabled
+
+
+def is_builtin_tool_enabled(name: str, builtin_tools: dict | None) -> bool:
+    return name not in disabled_builtin_tool_names(builtin_tools)
 
 
 # ── External tool servers ───────────────────────────────────
@@ -2497,7 +2851,7 @@ def _without_background_param(schema: dict) -> dict:
     return schema
 
 
-async def get_tool_list() -> list[dict]:
+async def get_tool_list(builtin_tools: dict | None = None) -> list[dict]:
     """Return tool schemas for the LLM.
 
     Automatically includes browser tools when browser.enabled is true,
@@ -2511,6 +2865,17 @@ async def get_tool_list() -> list[dict]:
         memory_enabled = (await Config.get("memory.enabled")) not in (False, "false", "0")
         if not memory_enabled:
             tools.pop("update_memory", None)
+        skills_enabled = (await Config.get("skills.enabled")) not in (False, "false", "0")
+        skills_tool_enabled = (await Config.get("skills.tool_enabled")) not in (
+            False,
+            "false",
+            "0",
+        )
+        if not skills_enabled:
+            tools.pop("view_skill", None)
+            tools.pop("manage_skill", None)
+        elif not skills_tool_enabled:
+            tools.pop("manage_skill", None)
         if (await Config.get("browser.enabled")) in (True, "true", "1"):
             tools.update(BROWSER_TOOLS)
         if (await Config.get("subagents.enabled")) in (True, "true", "1"):
@@ -2532,6 +2897,10 @@ async def get_tool_list() -> list[dict]:
         tools.pop("image_generate", None)
         pass
 
+    disabled_tools = disabled_builtin_tool_names(builtin_tools)
+    if disabled_tools:
+        tools = {name: tool for name, tool in tools.items() if name not in disabled_tools}
+
     schemas = [_fn_to_schema(name, t["fn"]) for name, t in tools.items()]
     if not background_subagents_enabled:
         schemas = [_without_background_param(s) for s in schemas]
@@ -2551,6 +2920,8 @@ async def execute_tool(name: str, args: dict, __context__: dict) -> str:
     """Execute a tool by name, injecting execution context."""
     info = ALL_TOOLS.get(name)
     if info:
+        if not is_builtin_tool_enabled(name, __context__.get("builtin_tools")):
+            return f"Error: tool disabled: {name}"
         fn = info["fn"]
         try:
             sig = inspect.signature(fn)

@@ -20,12 +20,13 @@
 	import { searchFiles } from '$lib/apis/files';
 	import { getSkills } from '$lib/apis/skills';
 	import { uploadFile } from '$lib/apis/files';
-	import type { ContextUsage } from '$lib/apis/chat';
+	import type { ChatTask, ContextUsage } from '$lib/apis/chat';
 	import ModelSelector from '../common/ModelSelector.svelte';
 	import SendButton from './SendButton.svelte';
 	import PlusMenu from './PlusMenu.svelte';
 	import DictateButton from './DictateButton.svelte';
 	import QueuedMessageItem from './QueuedMessageItem.svelte';
+	import Tasks from './Tasks.svelte';
 	import Icon from '../Icon.svelte';
 	import { planMode } from '$lib/stores';
 	import {
@@ -38,6 +39,8 @@
 	} from '$lib/stores/audio';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import { t } from '$lib/i18n';
+	import { TAB_DRAG_MIME } from '$lib/constants';
+	import { tooltip } from '$lib/tooltip';
 
 	// Keep screen awake during voice mode conversations
 	let voiceWakeLock: WakeLockSentinel | null = null;
@@ -67,11 +70,15 @@
 		workspace?: string;
 		placeholder?: string;
 		contextUsage?: ContextUsage | null;
+		tasks?: ChatTask[];
 		queuedMessages?: { id: string; content: string }[];
+		hasChatContent?: boolean;
 		onsend: () => void;
 		oncompact?: () => void;
+		onfork?: () => void;
 		onplan?: () => void;
 		onstatus?: () => void;
+		onskillslist?: () => void;
 		oncancel?: () => void;
 		onqueuesendnow?: (id: string) => void;
 		onqueueedit?: (id: string) => void;
@@ -85,11 +92,15 @@
 		workspace = '',
 		placeholder = 'Message...',
 		contextUsage = null,
+		tasks = [],
 		queuedMessages = [],
+		hasChatContent = false,
 		onsend,
 		oncompact,
+		onfork,
 		onplan,
 		onstatus,
+		onskillslist,
 		oncancel,
 		onqueuesendnow,
 		onqueueedit,
@@ -121,6 +132,13 @@
 				: $t('chat.voiceModeOn')
 	);
 
+	function isMobileInput(): boolean {
+		return (
+			typeof window !== 'undefined' &&
+			window.matchMedia('(hover: none) and (pointer: coarse)').matches
+		);
+	}
+
 	// ── Lowlight setup ──────────────────────────────
 	const lowlight = createLowlight(all);
 	const _origHighlight = lowlight.highlight.bind(lowlight);
@@ -134,6 +152,12 @@
 		{ id: string; name: string; url: string; type: string; loading?: boolean }[]
 	>([]);
 	let isDragging = $state(false);
+
+	function isTabDrag(e: DragEvent): boolean {
+		return Boolean(
+			e.dataTransfer?.types.includes(TAB_DRAG_MIME) || e.dataTransfer?.types.includes('text/tab-id')
+		);
+	}
 
 	async function processFiles(files: File[]) {
 		for (const file of files) {
@@ -161,6 +185,8 @@
 	}
 
 	function handleDrop(e: DragEvent) {
+		if (isTabDrag(e)) return;
+
 		e.preventDefault();
 		isDragging = false;
 		if (e.dataTransfer?.files) {
@@ -294,6 +320,7 @@
 					return true;
 				}
 				if (event.key === 'Enter') {
+					if (isMobileInput()) return false;
 					const item = currentItems[selectedIndex];
 					if (item && command) command(item);
 					return true;
@@ -341,23 +368,32 @@
 	let skillActiveClientRectFn: (() => DOMRect | null) | null = null;
 	let skillRepositionRafId: number | null = null;
 	let cachedSkills: SkillMentionAttrs[] | null = null;
+	let cachedSkillsWorkspace = '';
+	let slashSkillSuggestions = $state<SkillMentionAttrs[]>([]);
+	let slashSkillsRequestId = 0;
+
+	async function getCachedSkills(): Promise<SkillMentionAttrs[]> {
+		if (!workspace) return [];
+		if (!cachedSkills || cachedSkillsWorkspace !== workspace) {
+			const data = await getSkills(workspace);
+			cachedSkills = data.map((s) => ({
+				id: s.name,
+				label: s.name,
+				description: s.description,
+				source: s.source
+			}));
+			cachedSkillsWorkspace = workspace;
+		}
+		return cachedSkills;
+	}
 
 	async function fetchSkillSuggestions({ query }: { query: string }): Promise<SkillMentionAttrs[]> {
 		if (!workspace) return [];
 		try {
-			// Cache skills list (small, doesn't change during a session)
-			if (!cachedSkills) {
-				const data = await getSkills(workspace);
-				cachedSkills = data.map((s) => ({
-					id: s.name,
-					label: s.name,
-					description: s.description,
-					source: s.source
-				}));
-			}
-			if (!query) return cachedSkills;
+			const skills = await getCachedSkills();
+			if (!query) return skills;
 			const q = query.toLowerCase();
-			return cachedSkills.filter(
+			return skills.filter(
 				(s) => s.label.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q)
 			);
 		} catch {
@@ -449,6 +485,7 @@
 					return true;
 				}
 				if (event.key === 'Enter') {
+					if (isMobileInput()) return false;
 					const item = currentItems[selectedIndex];
 					if (item && command) command(item);
 					return true;
@@ -526,23 +563,25 @@
 					spellcheck: 'true'
 				},
 				handleKeyDown: (view, event) => {
+					if (event.key === 'Enter' && isMobileInput()) return false;
+
 					if (showSlashCommands) {
 						if (event.key === 'ArrowDown') {
 							event.preventDefault();
 							selectedSlashCommandIndex =
-								(selectedSlashCommandIndex + 1) % Math.max(slashCommandIds.length, 1);
+								(selectedSlashCommandIndex + 1) % Math.max(slashSuggestionIds.length, 1);
 							return true;
 						}
 						if (event.key === 'ArrowUp') {
 							event.preventDefault();
 							selectedSlashCommandIndex =
-								(selectedSlashCommandIndex - 1 + slashCommandIds.length) %
-								Math.max(slashCommandIds.length, 1);
+								(selectedSlashCommandIndex - 1 + slashSuggestionIds.length) %
+								Math.max(slashSuggestionIds.length, 1);
 							return true;
 						}
 						if (event.key === 'Enter') {
 							event.preventDefault();
-							runSlashCommand(slashCommandIds[selectedSlashCommandIndex]);
+							runSlashSuggestion(slashSuggestionIds[selectedSlashCommandIndex]);
 							return true;
 						}
 					}
@@ -911,29 +950,117 @@
 		}
 	});
 
-	const slashCommandQuery = $derived(inputText.trim().toLowerCase());
+	const slashCommandQuery = $derived(inputText.trimStart().toLowerCase());
 	const slashCommandIds = $derived.by(() => {
 		if (!slashCommandQuery.startsWith('/')) return [];
 		const ids: string[] = [];
-		if (oncompact && '/compact'.startsWith(slashCommandQuery)) ids.push('compact');
+		if (hasChatContent && oncompact && '/compact'.startsWith(slashCommandQuery))
+			ids.push('compact');
 		if (onplan && '/plan'.startsWith(slashCommandQuery)) ids.push('plan');
-		if (onstatus && '/status'.startsWith(slashCommandQuery)) ids.push('status');
+		if (hasChatContent && onfork && '/fork'.startsWith(slashCommandQuery)) ids.push('fork');
+		if (hasChatContent && onstatus && '/status'.startsWith(slashCommandQuery)) ids.push('status');
+		if (
+			hasChatContent &&
+			onskillslist &&
+			slashCommandQuery !== '/skills:list' &&
+			'/skills:list'.startsWith(slashCommandQuery)
+		)
+			ids.push('skills:list');
+		if (
+			hasChatContent &&
+			slashCommandQuery !== '/skills:create' &&
+			'/skills:create'.startsWith(slashCommandQuery)
+		)
+			ids.push('skills:create');
 		return ids;
 	});
-	const showSlashCommands = $derived(slashCommandIds.length > 0);
+	const slashSuggestionIds = $derived([
+		...slashCommandIds.map((id) => `command:${id}`),
+		...slashSkillSuggestions.map((skill) => `skill:${skill.id}`)
+	]);
+	const showSlashCommands = $derived(slashSuggestionIds.length > 0);
 	const contextPercent = $derived(Math.max(0, Math.round(contextUsage?.percent ?? 0)));
 	const contextCirclePercent = $derived(Math.min(contextPercent, 100));
 	const contextCircleOffset = $derived(50.27 * (1 - contextCirclePercent / 100));
 
 	$effect(() => {
-		if (selectedSlashCommandIndex >= slashCommandIds.length) selectedSlashCommandIndex = 0;
+		if (selectedSlashCommandIndex >= slashSuggestionIds.length) selectedSlashCommandIndex = 0;
 	});
+
+	$effect(() => {
+		const query = slashCommandQuery;
+		const requestId = ++slashSkillsRequestId;
+		if (!query.startsWith('/') || /\s/.test(query.slice(1)) || !workspace) {
+			slashSkillSuggestions = [];
+			return;
+		}
+		void fetchSkillSuggestions({ query: query.slice(1) }).then((items) => {
+			if (requestId !== slashSkillsRequestId) return;
+			slashSkillSuggestions = items.slice(0, 5);
+		});
+	});
+
+	function selectedSlashCommand(commandId: string) {
+		return slashSuggestionIds[selectedSlashCommandIndex] === `command:${commandId}`;
+	}
+
+	function selectSlashCommand(commandId: string) {
+		selectedSlashCommandIndex = slashSuggestionIds.indexOf(`command:${commandId}`);
+	}
+
+	function selectedSlashSkill(skillId: string) {
+		return slashSuggestionIds[selectedSlashCommandIndex] === `skill:${skillId}`;
+	}
+
+	function selectSlashSkill(skillId: string) {
+		selectedSlashCommandIndex = slashSuggestionIds.indexOf(`skill:${skillId}`);
+	}
+
+	function runSlashSuggestion(suggestionId: string | undefined) {
+		if (suggestionId?.startsWith('skill:')) {
+			const skillId = suggestionId.slice('skill:'.length);
+			const skill = slashSkillSuggestions.find((item) => item.id === skillId);
+			runSlashSkill(skill ?? { id: skillId, label: skillId });
+			return;
+		}
+		runSlashCommand(suggestionId?.replace(/^command:/, ''));
+	}
+
+	function runSlashSkill(skill: SkillMentionAttrs) {
+		if (!editor || editor.isDestroyed) {
+			inputText = `$${skill.label} `;
+			return;
+		}
+		editor
+			.chain()
+			.focus()
+			.clearContent()
+			.insertContent([
+				{
+					type: 'skillMention',
+					attrs: {
+						id: skill.id,
+						label: skill.label,
+						description: skill.description,
+						source: skill.source
+					}
+				},
+				{ type: 'text', text: ' ' }
+			])
+			.run();
+	}
 
 	function runSlashCommand(commandId: string | undefined) {
 		if (commandId === 'compact' && (sending || streaming)) return;
+		if (commandId === 'fork' && (sending || streaming)) return;
 		if (commandId === 'compact' && oncompact) {
 			inputText = '';
 			oncompact();
+			return;
+		}
+		if (commandId === 'fork' && onfork) {
+			inputText = '';
+			onfork();
 			return;
 		}
 		if (commandId === 'plan' && onplan) {
@@ -946,11 +1073,20 @@
 			onstatus();
 			return;
 		}
+		if (commandId === 'skills:list' && onskillslist) {
+			inputText = '';
+			onskillslist();
+			return;
+		}
+		if (commandId === 'skills:create') {
+			inputText = '/skills:create ';
+			return;
+		}
 		onsend();
 	}
 
 	function handleSubmit() {
-		runSlashCommand(slashCommandIds[0]);
+		runSlashSuggestion(slashSuggestionIds[0]);
 	}
 
 	// Allow sending during streaming (message will be enqueued server-side)
@@ -962,6 +1098,10 @@
 	ondrop={handleDrop}
 	onpaste={handlePaste}
 	ondragover={(e) => {
+		if (isTabDrag(e)) {
+			isDragging = false;
+			return;
+		}
 		e.preventDefault();
 		isDragging = true;
 	}}
@@ -970,6 +1110,12 @@
 	}}
 	role="presentation"
 >
+	{#if tasks.length > 0}
+		<div class="mx-1">
+			<Tasks {tasks} />
+		</div>
+	{/if}
+
 	<!-- Queued messages (above input, matching open-webui layout) -->
 	{#if queuedMessages.length > 0}
 		<div
@@ -989,24 +1135,29 @@
 
 	{#if showSlashCommands}
 		<div
-			class="app-theme app-surface absolute left-2 bottom-full mb-1 z-50 w-60 max-h-40 overflow-y-auto rounded-xl border shadow-xl p-0.5"
+			class="app-theme app-surface absolute left-2 bottom-full mb-1 z-50 w-64 max-h-40 overflow-y-auto rounded-xl border shadow-xl p-0.5"
 		>
-			<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
-				{$t('chat.commands')}
-			</div>
+			{#if slashCommandIds.length > 0}
+				<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
+					{$t('chat.commands')}
+				</div>
+			{/if}
 			{#if slashCommandIds.includes('compact')}
 				<button
 					type="button"
+					aria-label="Compact: shorten older messages so this chat can keep going."
+					use:tooltip={{
+						content: 'Shorten older messages so this chat can keep going.',
+						placement: 'top'
+					}}
 					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-xs text-left transition-colors duration-75
-						{slashCommandIds[selectedSlashCommandIndex] === 'compact'
-						? 'app-interactive-active'
-						: ''} disabled:opacity-50"
+						{selectedSlashCommand('compact') ? 'app-interactive-active' : ''} disabled:opacity-50"
 					disabled={sending || streaming}
 					onmousedown={(e) => e.preventDefault()}
 					onclick={() => {
 						runSlashCommand('compact');
 					}}
-					onmouseenter={() => (selectedSlashCommandIndex = slashCommandIds.indexOf('compact'))}
+					onmouseenter={() => selectSlashCommand('compact')}
 				>
 					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
 						<svg class="size-3.5 -rotate-90" viewBox="0 0 20 20" aria-hidden="true">
@@ -1043,13 +1194,18 @@
 			{#if slashCommandIds.includes('plan')}
 				<button
 					type="button"
+					aria-label="Plan: work out a plan first, then wait before changing files."
+					use:tooltip={{
+						content: 'Work out a plan first, then wait before changing files.',
+						placement: 'top'
+					}}
 					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-xs text-left transition-colors duration-75
-						{slashCommandIds[selectedSlashCommandIndex] === 'plan' ? 'app-interactive-active' : ''}"
+						{selectedSlashCommand('plan') ? 'app-interactive-active' : ''}"
 					onmousedown={(e) => e.preventDefault()}
 					onclick={() => {
 						runSlashCommand('plan');
 					}}
-					onmouseenter={() => (selectedSlashCommandIndex = slashCommandIds.indexOf('plan'))}
+					onmouseenter={() => selectSlashCommand('plan')}
 				>
 					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
 						<svg
@@ -1076,16 +1232,49 @@
 					</span>
 				</button>
 			{/if}
+			{#if slashCommandIds.includes('fork')}
+				<button
+					type="button"
+					aria-label="Fork: clone this chat into a new copy."
+					use:tooltip={{
+						content: 'Clone this chat into a new copy.',
+						placement: 'top'
+					}}
+					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-xs text-left transition-colors duration-75
+						{selectedSlashCommand('fork') ? 'app-interactive-active' : ''} disabled:opacity-50"
+					disabled={sending || streaming}
+					onmousedown={(e) => e.preventDefault()}
+					onclick={() => {
+						runSlashCommand('fork');
+					}}
+					onmouseenter={() => selectSlashCommand('fork')}
+				>
+					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
+						<Icon name="chat-fork" size={14} strokeWidth={1.8} />
+					</span>
+					<span class="flex-1 min-w-0 flex items-baseline gap-1.5 overflow-hidden">
+						<span class="truncate">{$t('chat.commandFork')}</span>
+						<span class="app-muted text-[0.625rem] truncate shrink-0">
+							{$t('chat.commandForkDesc')}
+						</span>
+					</span>
+				</button>
+			{/if}
 			{#if slashCommandIds.includes('status')}
 				<button
 					type="button"
+					aria-label="Status: check what is running in this chat."
+					use:tooltip={{
+						content: 'Check what is running in this chat.',
+						placement: 'top'
+					}}
 					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-xs text-left transition-colors duration-75
-						{slashCommandIds[selectedSlashCommandIndex] === 'status' ? 'app-interactive-active' : ''}"
+						{selectedSlashCommand('status') ? 'app-interactive-active' : ''}"
 					onmousedown={(e) => e.preventDefault()}
 					onclick={() => {
 						runSlashCommand('status');
 					}}
-					onmouseenter={() => (selectedSlashCommandIndex = slashCommandIds.indexOf('status'))}
+					onmouseenter={() => selectSlashCommand('status')}
 				>
 					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
 						<svg
@@ -1109,6 +1298,86 @@
 						</span>
 					</span>
 				</button>
+			{/if}
+			{#if slashCommandIds.includes('skills:list')}
+				<button
+					type="button"
+					aria-label="List skills: see the skills available in this workspace."
+					use:tooltip={{
+						content: 'See the skills available in this workspace.',
+						placement: 'top'
+					}}
+					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-xs text-left transition-colors duration-75
+						{selectedSlashCommand('skills:list') ? 'app-interactive-active' : ''}"
+					onmousedown={(e) => e.preventDefault()}
+					onclick={() => {
+						runSlashCommand('skills:list');
+					}}
+					onmouseenter={() => selectSlashCommand('skills:list')}
+				>
+					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
+						<Icon name="list" size={14} />
+					</span>
+					<span class="flex-1 min-w-0 flex items-baseline gap-1.5 overflow-hidden">
+						<span class="truncate">List skills</span>
+						<span class="app-muted text-[0.625rem] truncate shrink-0">/skills:list</span>
+					</span>
+				</button>
+			{/if}
+			{#if slashCommandIds.includes('skills:create')}
+				<button
+					type="button"
+					aria-label="Create skill: teach Computer a reusable workflow."
+					use:tooltip={{
+						content: 'Teach Computer a reusable workflow.',
+						placement: 'top'
+					}}
+					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-xs text-left transition-colors duration-75
+						{selectedSlashCommand('skills:create') ? 'app-interactive-active' : ''}"
+					onmousedown={(e) => e.preventDefault()}
+					onclick={() => {
+						runSlashCommand('skills:create');
+					}}
+					onmouseenter={() => selectSlashCommand('skills:create')}
+				>
+					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
+						<Icon name="plus" size={14} />
+					</span>
+					<span class="flex-1 min-w-0 flex items-baseline gap-1.5 overflow-hidden">
+						<span class="truncate">Create skill</span>
+						<span class="app-muted text-[0.625rem] truncate shrink-0">/skills:create</span>
+					</span>
+				</button>
+			{/if}
+			{#if slashSkillSuggestions.length > 0}
+				<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">Skills</div>
+				{#each slashSkillSuggestions as skill (skill.id)}
+					<button
+						type="button"
+						aria-label={`Use skill: ${skill.label}`}
+						use:tooltip={{
+							content: skill.label,
+							placement: 'top'
+						}}
+						class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-xs text-left transition-colors duration-75
+							{selectedSlashSkill(skill.id) ? 'app-interactive-active' : ''}"
+						onmousedown={(e) => e.preventDefault()}
+						onclick={() => {
+							runSlashSkill(skill);
+						}}
+						onmouseenter={() => selectSlashSkill(skill.id)}
+					>
+						<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
+							<Icon name="spark" size={13} strokeWidth={1.7} />
+						</span>
+						<span class="flex-1 min-w-0 flex items-baseline gap-1.5 overflow-hidden">
+							<span class="truncate">{skill.label}</span>
+							{#if skill.source && skill.source !== 'workspace'}
+								<span class="app-muted text-[0.625rem] truncate shrink-0">{skill.source}</span>
+							{/if}
+						</span>
+					</button>
+				{/each}
 			{/if}
 		</div>
 	{/if}

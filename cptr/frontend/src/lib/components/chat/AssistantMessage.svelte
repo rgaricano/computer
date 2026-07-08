@@ -3,11 +3,15 @@
 	import { get } from 'svelte/store';
 	import MarkdownRenderer from '$lib/components/markdown/MarkdownRenderer.svelte';
 	import OutputEditView from './OutputEditView.svelte';
+	import ChatFilePreview from './ChatFilePreview.svelte';
 	import ConsecutiveActivityGroup from './ConsecutiveActivityGroup.svelte';
+	import MessageTimestamp from './MessageTimestamp.svelte';
 	import ReasoningCollapsible from './ReasoningCollapsible.svelte';
 	import ToolCallCollapsible from './ToolCallCollapsible.svelte';
 	import { currentWorkspace, openFileTab } from '$lib/stores';
 	import { ttsConfigured, ttsEnabled } from '$lib/stores/audio';
+	import { tooltip } from '$lib/tooltip';
+	import { fileIconName } from '$lib/utils/fileIcon';
 	import Icon from '../Icon.svelte';
 	import { t } from '$lib/i18n';
 
@@ -18,11 +22,13 @@
 		usage: Record<string, number> | null;
 		chatId: string | null;
 		messageId: string;
+		createdAt?: number | null;
 		siblingIndex?: number;
 		siblingTotal?: number;
 		speaking?: boolean;
 		onapprove: (messageId: string, callId: string, approved: boolean) => void;
 		onnavigate?: (direction: -1 | 1) => void;
+		onfork?: () => void;
 		onregenerate?: () => void;
 		onedit?: (content: string, output: any[] | null, submit: boolean) => void;
 		onspeak?: () => void;
@@ -34,11 +40,13 @@
 		usage,
 		chatId,
 		messageId,
+		createdAt = null,
 		siblingIndex = 0,
 		siblingTotal = 1,
 		speaking = false,
 		onapprove,
 		onnavigate,
+		onfork,
 		onregenerate,
 		onedit,
 		onspeak
@@ -49,6 +57,7 @@
 	let editedOutput = $state<any[] | null>(null);
 	let copied = $state(false);
 	let showUsageTooltip = $state(false);
+	let collapsedFiles = $state<Record<string, boolean>>({});
 	let textareaEl: HTMLTextAreaElement;
 
 	async function startEdit() {
@@ -138,6 +147,17 @@
 		return parts[parts.length - 1];
 	}
 
+	function resolvedFilePath(file: any): string {
+		const path = String(file?.full_path || file?.path || '');
+		if (!path || path.startsWith('/')) return path;
+		const workspace = file?.workspace || get(currentWorkspace)?.path || '';
+		return workspace ? `${workspace.replace(/\/$/, '')}/${path.replace(/^\/+/, '')}` : path;
+	}
+
+	function toggleFile(key: string) {
+		collapsedFiles = { ...collapsedFiles, [key]: !collapsedFiles[key] };
+	}
+
 	/** Human-readable label for a tool call */
 	function toolLabel(name: string, args: any): string {
 		const _t = $t;
@@ -159,6 +179,8 @@
 				return _t('chat.tool.createFile', { path: shortPath(args.path) });
 			case 'write_file':
 				return _t('chat.tool.writeFile', { path: shortPath(args.path) });
+			case 'display_file':
+				return `Display ${shortPath(args.path)}`;
 			case 'list_directory':
 				return args.recursive
 					? _t('chat.tool.listDirectoryRecursive', { path: shortPath(args.path) })
@@ -234,7 +256,13 @@
 		item: any;
 	}
 
-	type DisplayItem = ActivityGroup | MessageItem | ArtifactItem | ImageItem;
+	interface FileItem {
+		type: 'file_item';
+		item: any;
+		index: number;
+	}
+
+	type DisplayItem = ActivityGroup | MessageItem | ArtifactItem | ImageItem | FileItem;
 
 	const outputText = $derived.by((): string => {
 		return (output || [])
@@ -313,7 +341,7 @@
 			}
 		};
 
-		for (const item of output) {
+		for (const [index, item] of output.entries()) {
 			if (item.type === 'function_call') {
 				ensureGroup();
 				currentGroup!.entries.push(item);
@@ -335,6 +363,9 @@
 			} else if (item.type === 'image') {
 				flushGroup();
 				items.push({ type: 'image_item', item });
+			} else if (item.type === 'file') {
+				flushGroup();
+				items.push({ type: 'file_item', item, index });
 			}
 			// function_call_output items are handled via outputMap, skip standalone render
 		}
@@ -469,6 +500,53 @@
 								</a>
 							{/each}
 						</div>
+					{:else if displayItem.type === 'file_item'}
+						{@const file = displayItem.item}
+						{@const filePath = resolvedFilePath(file)}
+						{@const fileKey = filePath || file.path || `file-${displayItem.index}`}
+						{@const collapsed = Boolean(collapsedFiles[fileKey])}
+						<div
+							class="my-2 w-full max-w-2xl overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/8 dark:bg-gray-950/20"
+						>
+							<div
+								class="flex h-8 items-center {collapsed
+									? ''
+									: 'border-b border-gray-100 dark:border-white/8'}"
+							>
+								<button
+									type="button"
+									class="flex h-full min-w-0 flex-1 items-center gap-2 px-2.5 text-left"
+									onclick={() => toggleFile(fileKey)}
+									aria-expanded={!collapsed}
+								>
+									<div
+										class="flex size-5 shrink-0 items-center justify-center text-gray-500 dark:text-gray-400"
+									>
+										<Icon name={fileIconName(file.name || file.path || '', 'file')} size={14} />
+									</div>
+									<div
+										class="min-w-0 flex-1 truncate text-xs font-medium text-gray-800 dark:text-gray-100"
+									>
+										{file.name || shortPath(file.path)}
+									</div>
+								</button>
+								<button
+									type="button"
+									class="mr-1 flex size-6 shrink-0 items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-200"
+									onclick={(event) => {
+										event.stopPropagation();
+										if (filePath) openFileTab(filePath);
+									}}
+									aria-label={$t('directory.open', { name: file.name || shortPath(file.path) })}
+									use:tooltip={'Open as tab'}
+								>
+									<Icon name="external-link" size={13} />
+								</button>
+							</div>
+							{#if !collapsed}
+								<ChatFilePreview {file} {filePath} />
+							{/if}
+						</div>
 					{:else if displayItem.type === 'activity_group'}
 						{#if displayItem.entries.length === 1}
 							{@const item = displayItem.entries[0]}
@@ -520,13 +598,14 @@
 
 		<!-- Controls toolbar -->
 		{#if done || siblingTotal > 1}
-			<div class="flex items-center gap-1 mt-1 -ml-0.5">
+			<div class="group/timestamp-toolbar flex items-center gap-1 mt-1 -ml-0.5">
 				{#if siblingTotal > 1}
 					<button
 						class="p-0.5 rounded text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-30 disabled:cursor-default transition-colors duration-100"
 						disabled={siblingIndex === 0}
 						onclick={() => onnavigate?.(-1)}
 						aria-label={$t('chat.prevResponse')}
+						use:tooltip={$t('chat.prevResponse')}
 					>
 						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
 							><path
@@ -545,6 +624,7 @@
 						disabled={siblingIndex === siblingTotal - 1}
 						onclick={() => onnavigate?.(1)}
 						aria-label={$t('chat.nextResponse')}
+						use:tooltip={$t('chat.nextResponse')}
 					>
 						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
 							><path
@@ -561,6 +641,7 @@
 						class="p-0.5 rounded text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100"
 						onclick={startEdit}
 						aria-label={$t('chat.editResponse')}
+						use:tooltip={$t('chat.editResponse')}
 					>
 						<svg
 							class="w-3.5 h-3.5"
@@ -581,6 +662,7 @@
 						class="p-0.5 rounded text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100"
 						onclick={copyContent}
 						aria-label={$t('chat.copyResponse')}
+						use:tooltip={copied ? $t('about.copied') : $t('chat.copyResponse')}
 					>
 						{#if copied}
 							<svg
@@ -621,7 +703,7 @@
 							: 'text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300'}"
 						onclick={onspeak}
 						aria-label={speaking ? $t('chat.stopSpeaking') : $t('chat.speakResponses')}
-						title={speaking ? $t('chat.stopSpeaking') : $t('chat.speakResponses')}
+						use:tooltip={speaking ? $t('chat.stopSpeaking') : $t('chat.speakResponses')}
 					>
 						<Icon name="speaker" size={14} />
 					</button>
@@ -631,6 +713,7 @@
 						class="p-0.5 rounded text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100"
 						onclick={onregenerate}
 						aria-label={$t('chat.regenerateResponse')}
+						use:tooltip={$t('chat.regenerateResponse')}
 					>
 						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
 							><path
@@ -642,6 +725,16 @@
 						>
 					</button>
 				{/if}
+				{#if done && onfork}
+					<button
+						class="p-0.5 rounded text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100"
+						onclick={onfork}
+						aria-label={$t('chat.forkResponse')}
+						use:tooltip={$t('chat.forkResponse')}
+					>
+						<Icon name="chat-fork" size={14} strokeWidth={1.8} />
+					</button>
+				{/if}
 				{#if done && usage && Object.keys(usage).length > 0}
 					<div class="relative flex items-center">
 						<button
@@ -650,6 +743,7 @@
 							onmouseenter={() => (showUsageTooltip = true)}
 							onmouseleave={() => (showUsageTooltip = false)}
 							aria-label={$t('chat.usageInfo')}
+							use:tooltip={$t('chat.usageInfo')}
 						>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
@@ -700,6 +794,7 @@
 						class="p-0.5 rounded text-gray-400 dark:text-gray-600 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100"
 						onclick={shareContent}
 						aria-label={$t('chat.share')}
+						use:tooltip={$t('chat.share')}
 					>
 						<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
 							><path
@@ -711,6 +806,7 @@
 						>
 					</button>
 				{/if}
+				<MessageTimestamp {createdAt} />
 			</div>
 		{/if}
 	{/if}
