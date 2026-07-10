@@ -32,12 +32,13 @@
 	import { TAB_DRAG_MIME } from '$lib/constants';
 
 	interface Props {
-		group: EditorGroup;
-		canClose?: boolean;
-		isPrimary?: boolean;
-	}
+	group: EditorGroup;
+	canClose?: boolean;
+	isPrimary?: boolean;
+	onTabDragOver?: () => void;
+}
 
-	let { group, canClose = false, isPrimary = false }: Props = $props();
+	let { group, canClose = false, isPrimary = false, onTabDragOver }: Props = $props();
 
 	let tabsEl: HTMLDivElement | undefined = $state();
 	let sortable: Sortable | null = null;
@@ -142,6 +143,8 @@
 		// Only accept tab drags (not file uploads)
 		if (!e.dataTransfer || !hasTabDrag(e.dataTransfer)) return;
 		e.preventDefault();
+		e.stopPropagation();
+		onTabDragOver?.();
 		e.dataTransfer.dropEffect = 'move';
 		dropHighlight = true;
 	}
@@ -155,8 +158,9 @@
 		if (!e.dataTransfer) return;
 		const payload = readTabDragPayload(e.dataTransfer);
 		if (!payload) return;
-		if (payload.groupId === group.id) return; // same group, ignore
 		e.preventDefault();
+		e.stopPropagation();
+		if (payload.groupId === group.id) return; // same group, ignore
 		moveTabToGroup(payload.tabId, payload.groupId, group.id);
 	}
 
@@ -208,7 +212,7 @@
 		const tab = contextMenu.tab;
 		const items: { label: string; icon?: string; onclick: () => void; divider?: boolean }[] = [];
 
-		if (isWideScreen && tab.type === 'file' && tab.filePath && !$splitActive) {
+		if (isWideScreen && tab.type === 'file' && tab.filePath) {
 			items.push({
 				label: $t('bar.splitRight'),
 				icon: 'split-horizontal',
@@ -242,7 +246,7 @@
 				active: direction === 'horizontal',
 				onclick: () => {
 					setSplitDirection('horizontal');
-					if (!$splitActive) splitCurrentTab('horizontal');
+					splitCurrentTab('horizontal');
 				}
 			},
 			{
@@ -251,7 +255,7 @@
 				active: direction === 'vertical',
 				onclick: () => {
 					setSplitDirection('vertical');
-					if (!$splitActive) splitCurrentTab('vertical');
+					splitCurrentTab('vertical');
 				}
 			}
 		];
@@ -373,8 +377,8 @@
 
 	<!-- Right-side controls -->
 	<div class="flex items-center gap-0.5 shrink-0">
-		<!-- Split button (wide screens, primary group only) -->
-		{#if isPrimary && isWideScreen}
+		<!-- Split button (wide screens) -->
+		{#if isWideScreen}
 			<button
 				bind:this={splitBtnEl}
 				class="flex items-center justify-center w-7 h-7 rounded-lg transition-colors duration-100 shrink-0
