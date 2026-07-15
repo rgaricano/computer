@@ -14,7 +14,13 @@ from typing import Any
 
 from cptr.events import EVENTS, publish_event
 from cptr.env import CHAT_MAX_ITERATIONS, CHAT_TOOL_COMMAND_MAX_CHARS, CHAT_TOOL_MAX_CHARS
-from cptr.utils.context import resolve_compact_token_threshold, should_compact
+from cptr.utils.context import (
+    build_context_usage,
+    normalize_usage,
+    resolve_compact_token_threshold,
+    should_compact,
+    usage_context_tokens,
+)
 from cptr.utils.skills import (
     bump_skill_view,
     discover_skills,
@@ -754,7 +760,7 @@ async def generate_chat_title(
 
         # Do not overwrite a title manually set while this request was running.
         chat = await Chat.get_by_id(chat_id)
-        fallback = user_content[:50].strip() or "New Chat"
+        fallback = user_message[:50].strip() or "New Chat"
         if not chat or chat.title != fallback:
             return
 
@@ -812,7 +818,7 @@ async def _load_message_history(chat_id: str, message_id: str) -> tuple[list[dic
         # (truly empty placeholder on first run)
         if m.id == message_id and not m.done and not m.content and not m.output:
             continue
-        entry: dict = {"role": m.role, "content": m.content or ""}
+        entry: dict = {"id": m.id, "role": m.role, "content": m.content or ""}
 
         # Transform uploaded images into base64 multimodal blocks; inline text files
         if m.role == "user":
@@ -903,6 +909,16 @@ async def _load_message_history(chat_id: str, message_id: str) -> tuple[list[dic
             for item in m.output:
                 itype = item.get("type")
                 if itype == "reasoning":
+                    if (
+                        item.get("status") not in (None, "completed")
+                        or str(item.get("id", "")).startswith("reasoning-")
+                        or (
+                            not item.get("encrypted_content")
+                            and not item.get("reasoning_details")
+                            and _reasoning_text_len(item) <= 0
+                        )
+                    ):
+                        continue
                     # A reasoning item after we already have outputs means
                     # a new API iteration started — flush the current turn.
                     if current_turn["outputs"]:
@@ -945,7 +961,7 @@ async def _load_message_history(chat_id: str, message_id: str) -> tuple[list[dic
                 # Skip other types (message, artifact, pending calls, etc.)
 
             # Don't forget the last turn
-            if current_turn["calls"] or current_turn["outputs"]:
+            if current_turn["reasoning"] or current_turn["calls"] or current_turn["outputs"]:
                 turns.append(current_turn)
 
             if not turns:
@@ -959,6 +975,18 @@ async def _load_message_history(chat_id: str, message_id: str) -> tuple[list[dic
                     call_names = {
                         tc["id"]: tc.get("function", {}).get("name", "") for tc in turn["calls"]
                     }
+                    if turn["reasoning"] and not matched_calls and not turn["outputs"]:
+                        if ti == 0:
+                            entry["reasoning_items"] = turn["reasoning"]
+                        else:
+                            result.append(entry)
+                            entry = {
+                                "id": m.id,
+                                "role": "assistant",
+                                "content": "",
+                                "reasoning_items": turn["reasoning"],
+                            }
+                        continue
                     if matched_calls:
                         if ti == 0:
                             # First turn: attach to the existing entry
@@ -970,6 +998,7 @@ async def _load_message_history(chat_id: str, message_id: str) -> tuple[list[dic
                             # result from previous turn) before creating a new one.
                             result.append(entry)
                             entry = {
+                                "id": m.id,
                                 "role": "assistant",
                                 "content": "",
                                 "tool_calls": matched_calls,
@@ -979,6 +1008,7 @@ async def _load_message_history(chat_id: str, message_id: str) -> tuple[list[dic
                     for out in turn["outputs"]:
                         result.append(entry)
                         entry = {
+                            "id": m.id,
                             "role": "tool",
                             "tool_call_id": out["call_id"],
                             "content": _tool_result_for_model(
@@ -1115,7 +1145,6 @@ def _tool_result_for_model(tool_name: str, result: str) -> str:
             "images": image_files,
         }
     )
-
 
 def _append_tool_to_messages(
     messages: list[dict],
@@ -1281,10 +1310,18 @@ def _scrub_incomplete_items(output_items: list[dict]) -> None:
 
 def _reasoning_text_len(item: dict) -> int:
     """Return displayable reasoning text length for diagnostics."""
-    blocks = item.get("summary") or item.get("content") or []
-    if not isinstance(blocks, list):
-        return 0
-    return sum(len(block.get("text") or "") for block in blocks if isinstance(block, dict))
+    total = 0
+    for blocks in (item.get("summary"), item.get("content")):
+        if isinstance(blocks, str):
+            total += len(blocks)
+        elif isinstance(blocks, list):
+            total += sum(
+                len(block.get("text") or "")
+                for block in blocks
+                if isinstance(block, dict)
+                and block.get("type") in ("text", "output_text", "summary_text")
+            )
+    return total
 
 
 def _output_debug_stats(output_items: list[dict] | None) -> tuple[dict[str, int], int, int]:
@@ -1388,6 +1425,16 @@ def _find_safe_split(messages: list[dict], target_keep: int) -> int:
         break
 
     return min(split, n - 2)  # always keep at least 2
+
+
+def _summary_checkpoint_message_id(keep_zone: list[dict], fallback: str) -> str:
+    for message in keep_zone:
+        if message.get("role") == "user" and message.get("id"):
+            return message["id"]
+    for message in keep_zone:
+        if message.get("id"):
+            return message["id"]
+    return fallback
 
 
 # ── Connection resolution ───────────────────────────────────
@@ -2046,7 +2093,10 @@ async def run_chat_task(
                     api_type=api_type,
                 )
 
-                await ChatMessage.update(summary_message_id, chat_summary=summary)
+                checkpoint_message_id = _summary_checkpoint_message_id(
+                    keep_zone, summary_message_id
+                )
+                await ChatMessage.update(checkpoint_message_id, chat_summary=summary)
                 loaded_summary = summary
 
                 # Append summary to system prompt (works for all providers)
@@ -2077,7 +2127,7 @@ async def run_chat_task(
                 logger.info(
                     "[task %s] compacted: checkpoint=%s dropped %d msgs, kept %d, summary=%d chars",
                     message_id[:8],
-                    summary_message_id[:8],
+                    checkpoint_message_id[:8],
                     len(drop_zone),
                     len(keep_zone),
                     len(summary),
@@ -2114,12 +2164,18 @@ async def run_chat_task(
                             ],
                         }
                     )
+            api_messages = [{k: v for k, v in m.items() if k != "id"} for m in api_messages]
 
             form_data = ChatCompletionForm(
                 model=model,
                 messages=api_messages,
                 instructions=system,
                 tools=tools,
+            )
+            provider_type = (
+                "llama.cpp"
+                if provider == "openai" and connection.get("provider_type") == "llama.cpp"
+                else "default"
             )
 
             if provider == "anthropic":
@@ -2128,11 +2184,19 @@ async def run_chat_task(
                 )
             elif connection.get("api_type") == "responses":
                 stream = stream_openai_responses(
-                    form_data, base_url, api_key, request_params=request_params
+                    form_data,
+                    base_url,
+                    api_key,
+                    request_params=request_params,
+                    provider_type=provider_type,
                 )
             else:
                 stream = stream_openai_completions(
-                    form_data, base_url, api_key, request_params=request_params
+                    form_data,
+                    base_url,
+                    api_key,
+                    request_params=request_params,
+                    provider_type=provider_type,
                 )
 
             restart = False
@@ -2188,13 +2252,16 @@ async def run_chat_task(
                     await emit(output=item)
 
                 elif event["type"] == "usage":
-                    usage = {k: v for k, v in event.items() if k != "type"}
-                    if "total_tokens" not in usage:
-                        usage["total_tokens"] = usage.get("input_tokens", 0) + usage.get(
-                            "output_tokens", 0
-                        )
+                    usage = normalize_usage({k: v for k, v in event.items() if k != "type"})
                     last_usage = usage
                     new_messages_since = 0
+                    tokens = usage_context_tokens(usage)
+                    if tokens > 0:
+                        await emit(
+                            context_usage=build_context_usage(
+                                tokens, threshold=compact_token_threshold, source="estimated"
+                            )
+                        )
 
                 elif event["type"] == "done":
                     # Stream ended. Usage may have arrived earlier, multiple times, or never.
