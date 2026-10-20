@@ -28,9 +28,37 @@ from cptr.env import (
     STREAM_READ_TIMEOUT_SECONDS,
     STREAM_WRITE_TIMEOUT_SECONDS,
 )
+from cptr.utils.json_parser import extract_json
 from cptr.utils.logger import log_upstream_request
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_tool_arguments(raw: str, tool_name: str) -> dict:
+    """Parse streamed tool-call arguments, tolerating provider quirks.
+
+    Providers occasionally stream empty or truncated argument JSON (e.g. when
+    output is cut off by token limits or an upstream hiccup). Try strict
+    parsing first, then fall back to the lenient extractor before giving up
+    with a descriptive error.
+
+    Raises RuntimeError with the tool name and a payload snippet when the
+    arguments cannot be recovered.
+    """
+    if raw is None or not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    recovered = extract_json(raw)
+    if isinstance(recovered, dict):
+        return recovered
+    snippet = raw.strip().replace("\n", " ")[:120]
+    raise RuntimeError(
+        f"Tool call '{tool_name}' returned unparseable arguments "
+        f"(invalid JSON from the provider): {snippet!r}"
+    )
 
 
 def _reasoning_output_item(text: str = "", *, status: str = "in_progress") -> dict:
@@ -406,12 +434,25 @@ def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
                 else:
                     blocks.append({"type": "text", "text": content})
             for tc in m["tool_calls"]:
+                # History replay: a stale/corrupt argument payload from a past
+                # turn must not break the current request — degrade to {}.
+                try:
+                    tc_input = _parse_tool_arguments(
+                        tc["function"].get("arguments", "{}"),
+                        tc["function"].get("name", "?"),
+                    )
+                except RuntimeError:
+                    logger.warning(
+                        "[anthropic] Dropping unparseable arguments for historical tool call %s",
+                        tc["function"].get("name", "?"),
+                    )
+                    tc_input = {}
                 blocks.append(
                     {
                         "type": "tool_use",
                         "id": tc.get("id", ""),
                         "name": tc["function"]["name"],
-                        "input": json.loads(tc["function"].get("arguments", "{}")),
+                        "input": tc_input,
                     }
                 )
             result.append({"role": "assistant", "content": blocks})
@@ -505,7 +546,9 @@ async def stream_anthropic(
                                     "type": "tool_call",
                                     "call_id": current_block["id"],
                                     "name": current_block["name"],
-                                    "arguments": json.loads(current_block["input_json"]),
+                                    "arguments": _parse_tool_arguments(
+                                        current_block["input_json"], current_block["name"]
+                                    ),
                                 }
 
                         elif etype == "message_delta":
@@ -702,17 +745,22 @@ async def stream_openai_completions(
                         reasoning_details = []
                         return item
 
+                    saw_done_sentinel = False
+                    finish_reason: str | None = None
                     async for line in resp.aiter_lines():
                         if not line.startswith("data:"):
                             continue
                         raw = line.removeprefix("data:").strip()
                         if raw == "[DONE]":
+                            saw_done_sentinel = True
                             break
                         if not raw:
                             continue
                         chunk = json.loads(raw)
                         choices = chunk.get("choices", [])
                         delta = choices[0].get("delta", {}) if choices else {}
+                        if choices and choices[0].get("finish_reason"):
+                            finish_reason = choices[0]["finish_reason"]
 
                         reasoning_delta = (
                             delta.get("reasoning_content")
@@ -775,7 +823,9 @@ async def stream_openai_completions(
                                     "type": "tool_call",
                                     "call_id": tc["id"],
                                     "name": tc["name"],
-                                    "arguments": json.loads(tc["arguments_json"]),
+                                    "arguments": _parse_tool_arguments(
+                                        tc["arguments_json"], tc["name"]
+                                    ),
                                 }
 
                         if chunk.get("usage"):
@@ -810,6 +860,19 @@ async def stream_openai_completions(
                             "Upstream provider returned an empty completion with no text, "
                             "output items, tool calls, or usage tokens."
                         )
+                    # Truncation detection: a healthy text response ends with
+                    # finish_reason "stop" (or "tool_calls" handled above) and the
+                    # [DONE] sentinel. Anything else means the provider ended the
+                    # stream early — surface that instead of silently saving a
+                    # half-finished reply.
+                    truncated_reason: str | None = None
+                    if finish_reason == "length":
+                        truncated_reason = "length"
+                    elif finish_reason is None and not saw_done_sentinel:
+                        truncated_reason = "stream_end"
+                    if truncated_reason:
+                        emitted = True
+                        yield {"type": "truncated", "reason": truncated_reason}
                     emitted = True
                     yield {"type": "done"}
             return
@@ -1032,6 +1095,7 @@ async def stream_openai_responses(
                             output_items_by_id[item_id] = active_reasoning_item
                         return active_reasoning_item
 
+                    saw_completed = False
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
                             continue
@@ -1040,6 +1104,9 @@ async def stream_openai_responses(
                             break
                         event = json.loads(raw)
                         etype = event.get("type")
+
+                        if etype == "response.completed":
+                            saw_completed = True
 
                         if etype == "response.output_text.delta":
                             emitted = True
@@ -1101,7 +1168,9 @@ async def stream_openai_responses(
                                     "id": item.get("id", ""),
                                     "call_id": item["call_id"],
                                     "name": item["name"],
-                                    "arguments": json.loads(item["arguments"]),
+                                    "arguments": _parse_tool_arguments(
+                                        item["arguments"], item["name"]
+                                    ),
                                 }
                             elif item["type"] == "reasoning":
                                 # Reasoning items must be round-tripped for reasoning models
@@ -1114,6 +1183,26 @@ async def stream_openai_responses(
                                     "type": "output",
                                     "item": item,
                                 }
+
+                        elif etype == "response.incomplete":
+                            # Responses API's normal terminal event for
+                            # length/tool-limit-capped generations. Mirrors the
+                            # completions path's finish_reason="length": emit
+                            # the event's usage and mark truncated with the
+                            # real reason instead of falling through to
+                            # stream_end (which would lose token accounting).
+                            resp_body = event.get("response", {})
+                            usage = resp_body.get("usage") or {}
+                            if usage:
+                                emitted = True
+                                yield {"type": "usage", **usage}
+                            reason = (resp_body.get("incomplete_details") or {}).get(
+                                "reason"
+                            ) or "length"
+                            emitted = True
+                            yield {"type": "truncated", "reason": reason}
+                            saw_completed = True  # terminal event reached; not a stream drop
+                            yield {"type": "done"}
 
                         elif etype == "response.failed":
                             error = event.get("response", {}).get("error", {})
@@ -1136,7 +1225,19 @@ async def stream_openai_responses(
                                 yield {"type": "usage", **usage}
                             emitted = True
                             yield {"type": "done"}
-            return
+                    # Stream ended without a terminal event: the provider
+                    # dropped the connection mid-response. Surface that instead
+                    # of silently saving a partial reply (mirrors the
+                    # chat-completions path's truncation detection).
+                    if not saw_completed:
+                        if emitted:
+                            yield {"type": "truncated", "reason": "stream_end"}
+                        else:
+                            raise EmptyCompletionError(
+                                "Responses API stream ended before response.completed "
+                                "with no events."
+                            )
+                return
         except _STREAM_RETRY_ERRORS as exc:
             if (
                 emitted

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -25,8 +26,10 @@ _current_bot_manager: "BotManager | None" = None
 # How often to edit the streaming message (seconds).
 STREAM_EDIT_INTERVAL = 2.0
 
-# Typing indicator refresh interval (seconds).
-TYPING_INTERVAL = 5.0
+# Typing indicator refresh interval for send-only platforms (seconds).
+# WhatsApp's indicator auto-dismisses after 25s; refreshing every 20s keeps
+# it alive during long generation without hammering the Graph API per poll.
+TYPING_INTERVAL = 20.0
 
 
 # ── Adapter interface ────────────────────────────────────────
@@ -52,6 +55,7 @@ class MessageEvent:
     sender_name: str  # Display name
     text: str  # Message content
     attachments: list[Attachment] = field(default_factory=list)
+    platform_message_id: str | None = None  # Platform's message id (e.g. WhatsApp wamid)
 
 
 class BaseAdapter(ABC):
@@ -63,6 +67,11 @@ class BaseAdapter(ABC):
     """
 
     platform: str = "unknown"
+
+    # Whether the platform supports editing sent messages in place.  Adapters
+    # on send-only platforms (e.g. WhatsApp) must set this to False; the
+    # bridge then delivers replies via send() instead of edit().
+    supports_edit: bool = True
 
     # Set by BotManager when the adapter is started.
     on_message: Optional[Callable[[MessageEvent], Awaitable[None]]] = None
@@ -252,6 +261,73 @@ class BotManager:
         self._stream_tasks: dict[str, asyncio.Task] = {}  # key → streaming task
         _current_bot_manager = self
 
+        # Watch every task started anywhere in the app: when the chat belongs
+        # to one of our bots, attach a delivery watcher. This is what makes
+        # dequeued pending-input batches (processed by chat_task after the
+        # original task finishes) actually deliver their replies to the
+        # platform — _dispatch_task only covers the triggering message.
+        from cptr.utils.chat_task import on_task_started
+
+        self._unregister_task_watcher = on_task_started(self._on_task_started)
+
+    def _on_task_started(self, chat_id: str, message_id: str) -> None:
+        """Attach a _stream_loop for tasks started outside _dispatch_task.
+
+        Called synchronously from start_task; spawns the watcher as its own
+        task so the caller is never blocked on DB lookups. The watcher entry
+        self-removes on completion (dict would otherwise grow unboundedly —
+        one entry per task start app-wide).
+        """
+        try:
+            key = f"watcher:{chat_id}:{message_id}"
+            task = asyncio.create_task(self._attach_watcher(chat_id, message_id))
+            self._stream_tasks[key] = task
+            task.add_done_callback(lambda _t, k=key: self._stream_tasks.pop(k, None))
+        except Exception:
+            logger.exception("[bridge] failed to spawn watcher for chat %s", chat_id[:8])
+
+    async def _attach_watcher(self, chat_id: str, message_id: str) -> None:
+        """Resolve bot+thread for a chat and start a delivery loop if it's ours."""
+        try:
+            if not self._adapters:
+                return  # no bots configured/running — skip the DB entirely
+            from cptr.models import Chat
+            from cptr.utils.db import get_db
+            from sqlalchemy import select
+
+            async with await get_db() as db:
+                row = (
+                    await db.execute(select(Chat).where(Chat.id == chat_id))
+                ).scalar_one_or_none()
+            if not row:
+                return
+            meta = row.meta or {}
+            bot_id = meta.get("bridge_bot_id")
+            platform_chat_id = meta.get("bridge_external_thread_id")
+            if not bot_id or not platform_chat_id:
+                return
+            adapter = self._adapters.get(bot_id)
+            if not adapter:
+                return
+            bot = next((b for b in await get_bot_configs() if b.get("id") == bot_id), None)
+            if not bot:
+                return
+            # Skip if _dispatch_task already has a live loop for this thread
+            # watching this exact message id (it would double-deliver).
+            stream_key = f"{bot_id}:{platform_chat_id}"
+            existing = self._stream_tasks.get(stream_key)
+            if existing and not existing.done():
+                return
+            self._stream_tasks[stream_key] = asyncio.create_task(
+                self._stream_loop(adapter, platform_chat_id, None, message_id, bot)
+            )
+            logger.info(
+                "[bridge] attached delivery watcher for task in chat %s (dequeued batch)",
+                chat_id[:8],
+            )
+        except Exception:
+            logger.exception("[bridge] _attach_watcher failed for chat %s", chat_id[:8])
+
     # ── Lifecycle ──────────────────────────────────────────
 
     async def start_all(self) -> None:
@@ -319,6 +395,11 @@ class BotManager:
     async def stop_all(self) -> None:
         for bot_id in list(self._tasks.keys()):
             await self.stop_bot(bot_id)
+        # Release the chat_task observer so a restarted manager doesn't
+        # stack a second watcher alongside this one.
+        unregister = getattr(self, "_unregister_task_watcher", None)
+        if unregister:
+            unregister()
 
     def is_running(self, bot_id: str) -> bool:
         task = self._tasks.get(bot_id)
@@ -386,6 +467,18 @@ class BotManager:
             return
 
         adapter = self._adapters.get(bot["id"])
+
+        # Blue-tick this specific inbound message as soon as processing starts
+        # (per-message, so batched messages all get receipts — not just the
+        # newest one the adapter's "last inbound" pointer knows about).
+        if adapter and event.platform_message_id:
+            try:
+                mark_read = getattr(adapter, "mark_read", None)
+                if mark_read:
+                    await mark_read(event.chat_id, event.platform_message_id)
+            except Exception:
+                logger.debug("[bridge] read receipt failed", exc_info=True)
+
         text = (event.text or "").strip()
 
         # Normalize: strip Discord bot mention prefix (<@123456>)
@@ -813,10 +906,12 @@ class BotManager:
         request = await internal_request_for_user(self.app, bot["user_id"])
         await export_chat_to_file(request, chat_id)
 
-        # Send initial "thinking" message for non-draft platforms (Discord)
-        # Telegram uses sendMessageDraft which handles this natively
+        # Send initial "thinking" message for non-draft platforms (Discord).
+        # Telegram uses sendMessageDraft which handles this natively.  Skip on
+        # send-only platforms (WhatsApp): the placeholder could never be edited
+        # in place, so it would just be noise.
         platform_msg_id = None
-        if adapter and bot["platform"] != "telegram":
+        if adapter and bot["platform"] != "telegram" and adapter.supports_edit:
             try:
                 platform_msg_id = await adapter.send(event.chat_id, "⏳ Thinking...")
             except Exception:
@@ -859,6 +954,9 @@ class BotManager:
         sendMessage to persist the final response (drafts are ephemeral).
 
         Discord: uses edit-based streaming (PATCH /messages).
+
+        Send-only platforms (WhatsApp): no placeholder, no streaming edits —
+        just a typing indicator while working, then the final reply via send().
         """
         from cptr.utils.chat_task import _task_state, _tasks
 
@@ -868,6 +966,9 @@ class BotManager:
         max_len = 32_768 if bot["platform"] == "telegram" else 2000
         last_sent = ""
         is_telegram = bot["platform"] == "telegram"
+        # Send-only platform: never edit, never send a placeholder.
+        use_send_only = not adapter.supports_edit
+        _last_typing_ts = 0.0  # fire immediately on the first poll tick
 
         # Telegram: use draft-based streaming
         draft_id: int | None = None
@@ -886,7 +987,7 @@ class BotManager:
                 logger.debug("[bridge] Draft not supported, falling back to edit", exc_info=True)
 
         # Fallback: if draft failed or non-Telegram, ensure we have a message to edit
-        if not use_draft and not platform_msg_id:
+        if not use_draft and not use_send_only and not platform_msg_id:
             try:
                 platform_msg_id = await adapter.send(platform_chat_id, "⏳ Thinking...")
             except Exception:
@@ -912,7 +1013,20 @@ class BotManager:
 
                 display = "\n\n".join(display_parts).strip()
 
-                if display and display != last_sent:
+                if use_send_only:
+                    # Send-only platform (WhatsApp): no in-place streaming.
+                    # Refresh the typing indicator periodically — the WhatsApp
+                    # indicator auto-dismisses after 25s, so a refresh below
+                    # the API's lifetime keeps it alive during long generation
+                    # without spamming the Graph API on every 2s poll tick.
+                    now_mono = time.monotonic()
+                    if now_mono - _last_typing_ts >= TYPING_INTERVAL:
+                        try:
+                            await adapter.send_typing(platform_chat_id)
+                            _last_typing_ts = now_mono
+                        except Exception:
+                            logger.debug("[bridge] typing indicator refresh failed", exc_info=True)
+                elif display and display != last_sent:
                     display = display[:max_len]
 
                     if use_draft:
@@ -930,6 +1044,8 @@ class BotManager:
                             pass
 
                 elif not display and not last_sent:
+                    # Edit-capable platforms: typing indicator while nothing
+                    # visible yet (placeholder/draft handles the rest).
                     if not use_draft:
                         try:
                             await adapter.send_typing(platform_chat_id)
@@ -949,18 +1065,26 @@ class BotManager:
             final_content = (msg.content if msg else content).strip()
 
             if not final_content:
-                if use_draft:
-                    await adapter.send(platform_chat_id, "✅ Done (no text output)")
+                if use_draft or use_send_only:
+                    try:
+                        await adapter.send(platform_chat_id, "✅ Done (no text output)")
+                    except Exception:
+                        logger.exception("[bridge] Failed to send completion notice")
                 elif platform_msg_id:
-                    await adapter.edit(
-                        platform_chat_id, platform_msg_id, "✅ Done (no text output)"
-                    )
+                    try:
+                        await adapter.edit(
+                            platform_chat_id, platform_msg_id, "✅ Done (no text output)"
+                        )
+                    except Exception:
+                        logger.exception("[bridge] Final edit failed")
                 return
 
             final_display = final_content
 
-            if use_draft:
-                # Draft is ephemeral — must send a real message to persist
+            if use_draft or use_send_only:
+                # Draft is ephemeral — must send a real message to persist.
+                # Send-only platforms (WhatsApp) have no placeholder to edit:
+                # the final reply is delivered via send() in chunks.
                 chunks = chunk_message(final_display, max_len)
                 for chunk in chunks:
                     try:
@@ -974,7 +1098,14 @@ class BotManager:
                         await adapter.edit(platform_chat_id, platform_msg_id, final_display)
                         return
                     except Exception:
-                        logger.debug("[bridge] Final edit failed", exc_info=True)
+                        logger.exception("[bridge] Final edit failed — falling back to send()")
+                        # Do not drop the reply: deliver via send() instead.
+                        chunks = chunk_message(final_display, max_len)
+                        for chunk in chunks:
+                            try:
+                                await adapter.send(platform_chat_id, chunk)
+                            except Exception:
+                                logger.exception("[bridge] Failed to send final chunk")
                         return
 
                 chunks = chunk_message(final_display, max_len)
@@ -983,14 +1114,13 @@ class BotManager:
                         await adapter.edit(platform_chat_id, platform_msg_id, chunks[0])
                         chunks = chunks[1:]
                     except Exception:
-                        logger.debug("[bridge] Final chunk edit failed", exc_info=True)
-                        return
+                        logger.exception("[bridge] Final chunk edit failed — sending all chunks")
                 for chunk in chunks:
                     try:
                         await adapter.send(platform_chat_id, chunk)
                     except Exception:
+                        # A lost chunk must be visible in logs, not silent.
                         logger.exception("[bridge] Failed to send reply chunk")
-                    break
 
         except asyncio.CancelledError:
             pass

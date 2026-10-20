@@ -182,12 +182,30 @@ class Chat(Base):
 
     @staticmethod
     async def update_title(chat_id: str, title: str, updated_at: int = 0) -> bool:
+        """Set a chat's title.
+
+        Renaming is a metadata change, not new activity: it must never make the
+        chat count as unread. The unread predicate is
+        updated_at > coalesce(last_read_at, 0), so bumping updated_at here flips
+        every renamed chat to unread and lights up the workspace badge. Keep
+        the prior updated_at; only when the chat has never been read
+        (last_read_at IS NULL) also stamp last_read_at so a freshly-created,
+        auto-titled chat does not linger as unread after its title is set.
+        """
         async with await get_db() as db:
-            result = await db.execute(
-                update(Chat).where(Chat.id == chat_id).values(title=title, updated_at=updated_at)
-            )
+            chat = (await db.execute(select(Chat).where(Chat.id == chat_id))).scalar_one_or_none()
+            if not chat:
+                return False
+            if updated_at and chat.last_read_at is None:
+                await db.execute(
+                    update(Chat)
+                    .where(Chat.id == chat_id)
+                    .values(title=title, updated_at=updated_at, last_read_at=updated_at)
+                )
+            else:
+                await db.execute(update(Chat).where(Chat.id == chat_id).values(title=title))
             await db.commit()
-            return result.rowcount > 0
+            return True
 
     @staticmethod
     async def update_summary(chat_id: str, summary: str, updated_at: int = 0) -> bool:
@@ -234,31 +252,95 @@ class Chat(Base):
 
     @staticmethod
     async def unread_counts_by_workspace(
-        user_id: str, workspace_paths: list[str], active_chat_ids: set[str]
+        user_id: str,
+        workspace_paths: list[str],
+        active_chat_ids: set[str],
+        exclude_bridge: bool = False,
     ) -> dict[str, int]:
-        """Derive unread counts from chats; do not persist a second read-state."""
+        """Derive unread counts from chats; do not persist a second read-state.
+
+        When exclude_bridge is set, messaging-gateway chats (Discord, WhatsApp,
+        ...) are excluded so they don't light up workspace badges.
+        """
         paths = list(dict.fromkeys(path for path in workspace_paths if path))
         if not paths:
             return {}
 
         workspace = Chat.meta["workspace"].as_string()
-        statement = (
-            select(workspace, func.count(Chat.id))
-            .where(
-                Chat.user_id == user_id,
-                workspace.in_(paths),
-                Chat.meta["internal"].as_boolean().is_not(True),
-                Chat.meta["subagent"].as_boolean().is_not(True),
-                Chat.updated_at > func.coalesce(Chat.last_read_at, 0),
-            )
-            .group_by(workspace)
-        )
+        filters = [
+            Chat.user_id == user_id,
+            workspace.in_(paths),
+            Chat.meta["internal"].as_boolean().is_not(True),
+            Chat.meta["subagent"].as_boolean().is_not(True),
+            Chat.updated_at > func.coalesce(Chat.last_read_at, 0),
+        ]
+        if exclude_bridge:
+            # NOTE: Chat.meta["bridge_bot_id"].is_(None) is WRONG here — the
+            # SQLite dialect wraps JSON access in JSON_QUOTE, and a MISSING key
+            # becomes the 4-char string 'null', never SQL NULL, so every normal
+            # chat would be filtered out (mute would invert the counts).
+            # json_type() returns SQL NULL for an absent path.
+            filters.append(func.json_type(Chat.meta, "$.bridge_bot_id").is_(None))
+        statement = select(workspace, func.count(Chat.id)).where(*filters).group_by(workspace)
         if active_chat_ids:
             statement = statement.where(Chat.id.not_in(active_chat_ids))
 
         async with await get_db() as db:
             result = await db.execute(statement)
             return {workspace: count for workspace, count in result.all() if workspace}
+
+    @staticmethod
+    async def workspace_paths_for_user(user_id: str) -> list[tuple]:
+        """Distinct workspace paths this user has chats in."""
+        workspace = Chat.meta["workspace"].as_string()
+        statement = (
+            select(workspace)
+            .where(
+                Chat.user_id == user_id,
+                Chat.meta.is_not(None),
+                workspace.is_not(None),
+                workspace != "",
+            )
+            .distinct()
+        )
+        async with await get_db() as db:
+            result = await db.execute(statement)
+            return [(path,) for (path,) in result.all() if path]
+
+    @staticmethod
+    async def mark_all_read(
+        user_id: str,
+        workspace_path: str | None,
+        last_read_at: int,
+        exclude_active: set[str] | None = None,
+    ) -> int:
+        """Stamp last_read_at on every unread chat, optionally scoped to one workspace.
+
+        Mirrors unread_counts_by_workspace's static filters so 'mark as read'
+        clears exactly the chats those counts were derived from. Active chats
+        are excluded when exclude_active is passed (mirroring the count
+        query): an in-flight task's Chat.touch on completion would otherwise
+        immediately re-flip the chat to unread after a bulk read.
+        Deliberately NOT bridge-excluded: read-all clears muted bridge chats
+        too, so unmuting later doesn't surface a wall of stale unread badges.
+        Returns rows updated.
+        """
+        workspace = Chat.meta["workspace"].as_string()
+        filters = [
+            Chat.user_id == user_id,
+            Chat.meta["internal"].as_boolean().is_not(True),
+            Chat.meta["subagent"].as_boolean().is_not(True),
+            Chat.updated_at > func.coalesce(Chat.last_read_at, 0),
+        ]
+        if workspace_path:
+            filters.append(workspace == workspace_path)
+        if exclude_active:
+            filters.append(Chat.id.not_in(exclude_active))
+        statement = update(Chat).where(*filters).values(last_read_at=last_read_at)
+        async with await get_db() as db:
+            result = await db.execute(statement)
+            await db.commit()
+            return result.rowcount or 0
 
     @staticmethod
     async def update_last_read_at(chat_id: str, user_id: str, last_read_at: int) -> bool:
@@ -589,7 +671,9 @@ class ChatMessage(Base):
         created_at: int = 0,
     ) -> ChatMessage:
         if isinstance(model, (list, tuple)):
-            model = next((item.strip() for item in model if isinstance(item, str) and item.strip()), None)
+            model = next(
+                (item.strip() for item in model if isinstance(item, str) and item.strip()), None
+            )
         elif model is not None and not isinstance(model, str):
             model = str(model)
 

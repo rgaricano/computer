@@ -11,7 +11,7 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from cptr.events import EVENTS, publish_event
 from cptr.env import CHAT_MAX_ITERATIONS, CHAT_TOOL_COMMAND_MAX_CHARS, CHAT_TOOL_MAX_CHARS
@@ -359,9 +359,68 @@ _task_state: dict[str, dict] = {}  # message_id → {content, output}
 _task_chat: dict[str, str] = {}  # message_id → chat_id
 _pending_input_locks: dict[str, asyncio.Lock] = {}  # chat_id → Lock
 
+# Observers notified whenever a task starts for a chat. The bridge registers
+# one so tasks spawned outside _dispatch_task (e.g. pending-input batches
+# dequeued by process_pending_chat_inputs) still get a delivery watcher —
+# without this, a queued batch's reply is saved to the DB but never reaches
+# the messaging platform.
+_task_watchers: list[Callable[[str, str], None]] = []
+
+
+def on_task_started(callback: Callable[[str, str], None]) -> Callable[[], None]:
+    """Register a callback(chat_id, message_id) fired for every started task.
+
+    Returns an unregister function. Callbacks run synchronously in the event
+    loop; they must not raise (exceptions are logged and swallowed).
+    """
+    _task_watchers.append(callback)
+
+    def _unregister():
+        try:
+            _task_watchers.remove(callback)
+        except ValueError:
+            pass
+
+    return _unregister
+
+
+def _notify_task_watchers(chat_id: str, message_id: str) -> None:
+    for callback in _task_watchers:
+        try:
+            callback(chat_id, message_id)
+        except Exception:
+            logger.exception(
+                "[task-watcher] observer failed for chat %s message %s",
+                chat_id[:8],
+                message_id[:8],
+            )
+
 
 def get_pending_input_lock(chat_id: str) -> asyncio.Lock:
     return _pending_input_locks.setdefault(chat_id, asyncio.Lock())
+
+
+def _apply_timing_stamp(message_meta: dict, kwargs: dict) -> dict | None:
+    """Terminal-save turn-timing stamp (pure; unit-tested).
+
+    For done=True saves on tasks that have meta.timing.started_at, returns
+    the meta dict to persist: message_meta (with completed_at stamped
+    idempotently via the passed mark callback) merged UNDER any explicit
+    kwargs meta (so error blocks etc. survive). Returns None when there is
+    nothing to stamp (non-terminal saves, or tasks without started_at).
+    Mutates message_meta only through the provided callback.
+    """
+    timing = message_meta.get("timing")
+    if not kwargs.get("done") or not isinstance(timing, dict) or not timing.get("started_at"):
+        return None
+    if "completed_at" not in timing:
+        # First terminal save records the instant; later done=True saves
+        # (e.g. cancel after error) keep the original — idempotent here,
+        # not just in the caller's closure.
+        mark = kwargs.pop("_timing_mark", None)
+        if callable(mark):
+            mark()
+    return {**message_meta, **(kwargs.get("meta") or {})}
 
 
 def start_task(
@@ -401,10 +460,14 @@ def start_task(
     )
     _tasks[message_id] = task
     _task_chat[message_id] = chat_id
+    _notify_task_watchers(chat_id, message_id)
 
     async def emit_active():
+        from cptr.models.users import UserStates
+
+        mute_bridge = await UserStates.get_flag(user_id, "bridge_notifications_muted")
         unread_counts = await Chat.unread_counts_by_workspace(
-            user_id, [workspace], get_active_chat_ids()
+            user_id, [workspace], get_active_chat_ids(), exclude_bridge=mute_bridge
         )
         await emit_to_user(
             user_id,
@@ -443,6 +506,22 @@ def get_live_state(message_id: str) -> dict | None:
 def get_active_chat_ids() -> set[str]:
     """Return the set of chat_ids that currently have a running task."""
     return {cid for mid, cid in _task_chat.items() if mid in _tasks and not _tasks[mid].done()}
+
+
+def get_active_tasks() -> dict[str, str]:
+    """Return mapping of chat_id -> running message_id for active tasks.
+
+    Used by GET /api/chats/active so the global running-agents panel can
+    offer Stop per chat (cancelTask needs the message_id). When several
+    tasks map to one chat the last-seen wins; in practice one runs at a time
+    (queued inputs are drained sequentially).
+    """
+    active: dict[str, str] = {}
+    for mid, cid in _task_chat.items():
+        task = _tasks.get(mid)
+        if task is not None and not task.done():
+            active[cid] = mid
+    return active
 
 
 def _plain_message_text(content) -> str:
@@ -1418,6 +1497,19 @@ async def run_chat_task(
                 "[task %s] internal request creation failed", message_id[:8], exc_info=True
             )
 
+    # Messaging-gateway chats may use a dedicated base system prompt. Only the
+    # base template is swapped; memory, instruction files, skills, and runtime
+    # context are injected afterwards exactly as for normal chats.
+    gateway_system_prompt: str | None = None
+    try:
+        chat_obj = await Chat.get_by_id(chat_id)
+        if chat_obj and (chat_obj.meta or {}).get("bridge_bot_id"):
+            configured = await Config.get("gateway.system_prompt")
+            if isinstance(configured, str) and configured.strip():
+                gateway_system_prompt = configured
+    except Exception:
+        logger.debug("[task %s] gateway system prompt lookup failed", message_id[:8], exc_info=True)
+
     async def emit(**data):
         """Stream an output delta to the user."""
         try:
@@ -1444,9 +1536,11 @@ async def run_chat_task(
             chat_obj = await Chat.get_by_id(chat_id)
             title = chat_obj.title if chat_obj else "Chat"
         except Exception:
+            chat_obj = None
             title = "Chat"
         preview = content[:300] if content else ""
         ws_name = workspace.rstrip("/").rsplit("/", 1)[-1] if workspace else ""
+        is_bridge = bool((chat_obj.meta or {}).get("bridge_bot_id")) if chat_obj else False
         try:
             await clear_active_tasks(chat_id, user_id, message_id)
         except Exception:
@@ -1457,6 +1551,7 @@ async def run_chat_task(
             content=preview,
             workspace=workspace,
             workspace_name=ws_name,
+            bridge=is_bridge,
         )
 
     event_workspace = (
@@ -1472,6 +1567,24 @@ async def run_chat_task(
             summary_message_id = parent_msg.id
     content = (msg.content or "") if msg else ""
     output_items: list[dict] = list(msg.output or []) if msg else []
+    message_meta: dict = dict(msg.meta or {}) if msg else {}
+    # Turn-timing stamps: measured at the task lifecycle, not message rows.
+    # The assistant row's created_at is the placeholder-creation instant
+    # (~same as the user's send), so created_at deltas measure queue wait,
+    # not work. started_at/completed_at ride message_meta on the terminal
+    # save; the frontend prefers them when present.
+    task_started_at = now_ms()
+    message_meta["timing"] = {"started_at": task_started_at}
+    _timing_completed = False
+
+    def _mark_timing_completed() -> dict:
+        """Idempotently stamp completed_at into message_meta for terminal saves."""
+        nonlocal _timing_completed
+        if not _timing_completed:
+            message_meta["timing"]["completed_at"] = now_ms()
+            _timing_completed = True
+        return message_meta
+
     text_buffer = ""  # Accumulates text between tool calls
     task_completed_success = False
     review_messages: list[dict] = []
@@ -1520,6 +1633,16 @@ async def run_chat_task(
 
     async def _save_message(save_reason: str, **kwargs) -> bool:
         """Persist a message update and log enough detail to debug skipped saves."""
+        # Terminal save (done=True): stamp completion time for turn timing
+        # (idempotent — see _apply_timing_stamp). Non-stamping saves pass
+        # their kwargs through untouched.
+        if kwargs.get("done"):
+            stamped = _apply_timing_stamp(
+                message_meta,
+                {**kwargs, "_timing_mark": _mark_timing_completed},
+            )
+            if stamped is not None:
+                kwargs["meta"] = stamped
         saved_output = kwargs.get("output", output_items)
         saved_content = kwargs.get("content", content)
         counts, reasoning_count, reasoning_chars = _output_debug_stats(saved_output)
@@ -1569,6 +1692,8 @@ async def run_chat_task(
         from cptr.utils.agents.grok import run_grok_agent
         from cptr.utils.agents.opencode import run_opencode_agent
         from cptr.utils.agents.pi import run_pi_agent
+        from cptr.utils.agents.antigravity import run_antigravity_agent
+        from cptr.utils.agents.command_code import run_command_code_agent
 
         chat_obj = await Chat.get_by_id(chat_id)
         identity = await identity_for_context({"request": request, "user_id": user_id})
@@ -1593,6 +1718,7 @@ async def run_chat_task(
             current_message=memory_message,
             recent_messages=messages,
             mentioned_files=memory_files,
+            base_template_override=gateway_system_prompt,
         )
         if loaded_summary:
             system += f"\n\n[CONVERSATION SUMMARY]\n{loaded_summary}"
@@ -1634,6 +1760,9 @@ async def run_chat_task(
             "cline": run_cline_agent,
             "gemini": run_gemini_agent,
             "pi": run_pi_agent,
+            "antigravity": run_antigravity_agent,
+            "kilo": run_opencode_agent,
+            "command_code": run_command_code_agent,
         }
         runner = runners.get(agent_target.agent)
         if runner is None:
@@ -1911,6 +2040,7 @@ async def run_chat_task(
             current_message=memory_message,
             recent_messages=messages,
             mentioned_files=memory_files,
+            base_template_override=gateway_system_prompt,
         )
         if loaded_summary:
             system += f"\n\n[CONVERSATION SUMMARY]\n{loaded_summary}"
@@ -2078,7 +2208,9 @@ async def run_chat_task(
                 if name == "create_artifact":
                     args = dict(arguments)
                     args.pop("workspace", None)
-                    result = await create_artifact(**args, workspace=workspace)
+                    result = await create_artifact(
+                        **args, __context__={**tool_ctx, "call_id": item["call_id"]}
+                    )
                 else:
                     result = await execute_tool(
                         name,
@@ -2197,6 +2329,7 @@ async def run_chat_task(
                     current_message=memory_message,
                     recent_messages=keep_zone,
                     mentioned_files=memory_files,
+                    base_template_override=gateway_system_prompt,
                 )
                 system += f"\n\n[CONVERSATION SUMMARY]\n{summary}"
                 # Re-inject attached skills after compaction (protect from pruning)
@@ -2372,6 +2505,17 @@ async def run_chat_task(
                             )
                         )
 
+                elif event["type"] == "truncated" and "truncated" not in message_meta:
+                    # Provider ended the stream early (output cap or dropped
+                    # connection). Record it on the message so the UI can offer
+                    # a Continue affordance; the reply itself is still saved.
+                    logger.warning(
+                        "[task %s] provider stream ended early (reason=%s); marking message truncated",
+                        message_id[:8],
+                        event.get("reason"),
+                    )
+                    message_meta["truncated"] = {"reason": event.get("reason") or "stream_end"}
+
                 elif event["type"] == "done":
                     # Stream ended. Usage may have arrived earlier, multiple times, or never.
                     if not pending_calls:
@@ -2398,6 +2542,7 @@ async def run_chat_task(
                             output=output_items,
                             usage=last_usage,
                             done=True,
+                            **({"meta": message_meta} if message_meta else {}),
                         )
                         _task_state.pop(message_id, None)
                         await _emit_done()
@@ -2632,7 +2777,9 @@ async def run_chat_task(
                     if tc["name"] == "create_artifact":
                         args = dict(tc["arguments"])
                         args.pop("workspace", None)
-                        result = await create_artifact(**args, workspace=workspace)
+                        result = await create_artifact(
+                            **args, __context__={**tool_ctx, "call_id": tc["call_id"]}
+                        )
                     else:
                         result = await execute_tool(
                             tc["name"],
@@ -2724,8 +2871,15 @@ async def run_chat_task(
                 messages.extend(new_messages)
                 new_messages_since += len(new_messages)
 
-                # Persist after all tool calls
-                await _save_message("tool calls complete", content=content, output=output_items)
+                # Persist after all tool calls. message_meta carries the
+                # truncated flag when the provider stream ended early — pass
+                # it through so the flag survives to the final save.
+                await _save_message(
+                    "tool calls complete",
+                    content=content,
+                    output=output_items,
+                    **({"meta": message_meta} if message_meta else {}),
+                )
                 restart = True
 
             if not restart:
@@ -2738,6 +2892,7 @@ async def run_chat_task(
                     output=output_items,
                     usage=last_usage,
                     done=True,
+                    **({"meta": message_meta} if message_meta else {}),
                 )
                 _task_state.pop(message_id, None)
                 await _emit_done()
@@ -2754,13 +2909,15 @@ async def run_chat_task(
                 task_completed_success = True
                 return
 
-        # Max iterations reached
+        # Max iterations reached. Merge meta (preserve truncated flag if the
+        # provider stream had already ended early).
+        max_iter_meta = {**message_meta, "error": "max iterations reached"}
         await _save_message(
             "max iterations",
             content=content,
             output=output_items,
             done=True,
-            meta={"error": "max iterations reached"},
+            meta=max_iter_meta,
         )
         _task_state.pop(message_id, None)
         await _emit_done()
@@ -2777,7 +2934,13 @@ async def run_chat_task(
     except asyncio.CancelledError:
         _flush_text()
         _scrub_incomplete_items(output_items)
-        await _save_message("cancelled", content=content, output=output_items, done=True)
+        await _save_message(
+            "cancelled",
+            content=content,
+            output=output_items,
+            done=True,
+            **({"meta": message_meta} if message_meta else {}),
+        )
         _task_state.pop(message_id, None)
         await _emit_done()
     except Exception as e:
@@ -2810,7 +2973,7 @@ async def run_chat_task(
             content=content,
             output=output_items,
             done=True,
-            meta={"error": error_msg},
+            meta={**message_meta, "error": error_msg},
         )
         _task_state.pop(message_id, None)
         await emit(done=True, error=error_msg)
@@ -2841,8 +3004,11 @@ async def run_chat_task(
             try:
                 await Chat.touch(chat_id, now_ms())
                 chat = await Chat.get_by_id(chat_id)
+                from cptr.models.users import UserStates
+
+                mute_bridge = await UserStates.get_flag(user_id, "bridge_notifications_muted")
                 unread_counts = await Chat.unread_counts_by_workspace(
-                    user_id, [workspace], get_active_chat_ids()
+                    user_id, [workspace], get_active_chat_ids(), exclude_bridge=mute_bridge
                 )
                 await emit_to_user(
                     user_id,

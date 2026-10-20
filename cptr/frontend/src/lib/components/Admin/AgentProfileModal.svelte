@@ -50,7 +50,10 @@
 			opencode: 'opencode',
 			cline: 'cline',
 			gemini: 'gemini',
-			pi: 'pi'
+			pi: 'pi',
+			antigravity: 'agy',
+			kilo: 'kilo',
+			command_code: 'cmd'
 		}[agent];
 	}
 
@@ -63,7 +66,10 @@
 			opencode: 'OpenCode',
 			cline: 'Cline',
 			gemini: 'Gemini',
-			pi: 'Pi'
+			pi: 'Pi',
+			antigravity: 'Antigravity',
+			kilo: 'Kilo',
+			command_code: 'Command Code'
 		}[agent];
 	}
 </script>
@@ -135,6 +141,9 @@
 					<option value="cline">Cline</option>
 					<option value="gemini">Gemini</option>
 					<option value="pi">Pi</option>
+					<option value="antigravity">Antigravity</option>
+					<option value="kilo">Kilo</option>
+					<option value="command_code">Command Code</option>
 				</select>
 			</div>
 		</div>

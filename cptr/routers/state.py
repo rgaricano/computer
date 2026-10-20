@@ -101,10 +101,15 @@ def _workspace_display_name(path: str) -> str:
 async def _workspace_summaries(user_id: str) -> list[dict[str, str | int]]:
     workspaces = await Workspace.get_by_user(user_id)
     summaries = _dedupe_workspaces(workspaces)
+    from cptr.models.users import UserStates
     from cptr.utils.chat_task import get_active_chat_ids
 
+    mute_bridge = await UserStates.get_flag(user_id, "bridge_notifications_muted")
     unread_counts = await Chat.unread_counts_by_workspace(
-        user_id, [path for path, _ in summaries], get_active_chat_ids()
+        user_id,
+        [path for path, _ in summaries],
+        get_active_chat_ids(),
+        exclude_bridge=mute_bridge,
     )
     return [
         {
@@ -125,7 +130,16 @@ async def get_preferences(request: Request):
     user_id = await _get_user_id(request)
     if not user_id:
         return {}
-    return await UserStates.get_data(user_id)
+    data = await UserStates.get_data(user_id)
+    # Lazy migration: the bridge-mute toggle was historically persisted under
+    # its camelCase key only, while backend flag readers use the snake_case
+    # name. Users who toggled before the alias existed would show mute ON in
+    # the UI while every server-side get_flag returned False. Backfill the
+    # snake_case key once on read (snake wins if both exist).
+    if "bridgeNotificationsMuted" in data and "bridge_notifications_muted" not in data:
+        data["bridge_notifications_muted"] = data["bridgeNotificationsMuted"]
+        await UserStates.save_data(user_id, data)
+    return data
 
 
 @router.put("/preferences")
@@ -135,6 +149,15 @@ async def put_preferences(request: Request):
     if not user_id:
         return {"status": "skipped"}
     body = await request.json()
+
+    # The frontend persists the bridge-mute toggle under its camelCase key,
+    # while backend readers use the snake_case flag name. Alias so the flag
+    # is actually readable by UserStates.get_flag("bridge_notifications_muted")
+    # at all seven call sites; without this the mute never applies to server
+    # computed unread counts. snake_case wins if both are present.
+    if "bridgeNotificationsMuted" in body:
+        body.setdefault("bridge_notifications_muted", body["bridgeNotificationsMuted"])
+
     current = await UserStates.get_data(user_id)
     await UserStates.save_data(user_id, {**current, **body})
     return {"status": "saved"}

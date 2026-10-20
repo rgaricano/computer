@@ -16,6 +16,7 @@ export interface ChatStatus {
 	updatedAt: number | null;
 	lastReadAt: number | null;
 	active: boolean;
+	bridge: boolean;
 }
 
 type ChatStatusSource = {
@@ -24,6 +25,7 @@ type ChatStatusSource = {
 	updated_at: number;
 	last_read_at: number | null;
 	is_active?: boolean;
+	meta?: Record<string, any> | null;
 };
 
 /** Shared chat state for sidebar rows, workspace summaries, and chat tabs. */
@@ -38,7 +40,11 @@ function statusFrom(
 		workspace: workspace ?? source.workspace ?? current?.workspace ?? '',
 		updatedAt: source.updated_at,
 		lastReadAt: source.last_read_at,
-		active: source.is_active ?? current?.active ?? false
+		active: source.is_active ?? current?.active ?? false,
+		// Monotonic: API meta is authoritative, so a stale seeded `false` (e.g.
+		// from setChatActive before any chat-list fetch) gets corrected here.
+		// bridge_bot_id never disappears from a chat's meta, so `||` is safe.
+		bridge: (current?.bridge || Boolean(source.meta?.bridge_bot_id)) === true
 	};
 }
 
@@ -59,7 +65,8 @@ export function setChatActive(chatId: string, active: boolean, workspace = '') {
 			workspace: workspace || current?.workspace || '',
 			updatedAt: current?.updatedAt ?? null,
 			lastReadAt: current?.lastReadAt ?? null,
-			active
+			active,
+			bridge: current?.bridge ?? false
 		});
 		return next;
 	});
@@ -75,6 +82,17 @@ export function setChatReadAt(chatId: string, lastReadAt = Date.now()) {
 	});
 }
 
+/** Mark a chat as messaging-gateway-sourced once its meta is known. */
+export function setChatBridge(chatId: string, bridge: boolean) {
+	chatStatuses.update((statuses) => {
+		const current = statuses.get(chatId);
+		if (!current || current.bridge === bridge) return statuses;
+		const next = new Map(statuses);
+		next.set(chatId, { ...current, bridge });
+		return next;
+	});
+}
+
 export function isChatUnread(status: ChatStatus | undefined): boolean {
 	return (
 		!!status &&
@@ -82,6 +100,28 @@ export function isChatUnread(status: ChatStatus | undefined): boolean {
 		status.updatedAt !== null &&
 		(status.lastReadAt === null || status.updatedAt > status.lastReadAt)
 	);
+}
+
+/** Unread that should surface as an indicator in the UI (respects bridge muting). */
+export function isChatUnreadVisible(status: ChatStatus | undefined, muted: boolean): boolean {
+	return isChatUnread(status) && !(muted && (status?.bridge ?? false));
+}
+
+// ── Auto-continue attempt tracking ───────────────────────────
+// Module-level so co-mounted ChatPanel instances (workspace + home pane)
+// share the per-message cap; survives chat switches, resets on reload.
+const autoContinueAttempts = new Map<string, number>();
+const AUTO_CONTINUE_LIMIT = 2;
+
+export function bumpAutoContinueAttempt(chatId: string, msgId: string): number {
+	const key = `${chatId}:${msgId}`;
+	const next = (autoContinueAttempts.get(key) ?? 0) + 1;
+	autoContinueAttempts.set(key, next);
+	return next;
+}
+
+export function autoContinueLimitReached(chatId: string, msgId: string): boolean {
+	return (autoContinueAttempts.get(`${chatId}:${msgId}`) ?? 0) >= AUTO_CONTINUE_LIMIT;
 }
 
 /** Set of tab IDs whose chat is currently streaming (assistant message not done). */
@@ -153,6 +193,13 @@ notificationSound.subscribe((v) => {
 	if (typeof localStorage !== 'undefined') localStorage.setItem('notificationSound', String(v));
 });
 
+/**
+ * Whether messaging-gateway (Discord/WhatsApp/...) chats should stay silent in
+ * the UI: no toasts, browser notifications, or unread indicators. The server
+ * also reads this preference so workspace unread badges agree with the client.
+ */
+export const bridgeNotificationsMuted = writable<boolean>(false);
+
 export function bindGlobalChatListener() {
 	if (globalListenerBound) return;
 
@@ -171,7 +218,15 @@ export function bindGlobalChatListener() {
 			active?: boolean;
 			updated_at?: number;
 			last_read_at?: number;
+			bridge?: boolean;
 		}) => {
+			if (data.type === 'chat:read_all') {
+				// Bulk event: carries no chat_id, and SidebarWorkspaceList
+				// refreshes its chat cache on it. Feeding it through the
+				// per-chat branches below would no-op (setChatReadAt with
+				// undefined) and leave stale unread dots in chatStatuses.
+				return;
+			}
 			if (data.type === 'chat:active' && typeof data.active === 'boolean') {
 				setChatActive(data.chat_id, data.active, data.workspace);
 			}
@@ -184,6 +239,11 @@ export function bindGlobalChatListener() {
 					next.set(data.chat_id, { ...current, updatedAt });
 					return next;
 				});
+			}
+			// The done event carries the authoritative bridge flag (backend reads
+			// chat.meta.bridge_bot_id); use it to correct a stale seeded value.
+			if (data.bridge === true) {
+				setChatBridge(data.chat_id, true);
 			}
 			if (typeof data.last_read_at === 'number') {
 				setChatReadAt(data.chat_id, data.last_read_at);
@@ -211,6 +271,10 @@ export function bindGlobalChatListener() {
 					(isHome && currentHomeTab?.type === 'chat' && currentHomeTab.path === data.chat_id));
 
 			if (isViewingThisChat) return;
+
+			// Gateway chats read on another platform stay silent when muted
+			const isBridgeChat = data.bridge === true;
+			if (isBridgeChat && get(bridgeNotificationsMuted)) return;
 
 			const workspacePath = isSupportedWorkspacePath(data.workspace) ? data.workspace : '';
 			const workspaceDisplayName = data.workspace_name || getPathDisplayName(workspacePath);

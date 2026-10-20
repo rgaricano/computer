@@ -237,6 +237,56 @@ async def list_chats(
     }
 
 
+# NOTE: Must be declared before /{chat_id} routes to avoid 'read-all' being
+# treated as a chat_id.
+@router.post("/read-all")
+async def mark_all_chats_read(request: Request, body: MarkWorkspaceReadRequest):
+    """Mark every unread chat in a workspace (or all workspaces) as read.
+
+    Bulk variant of the chat:read socket event: stamps last_read_at on all
+    chats that currently count as unread for the user, then pushes fresh
+    workspace unread counts so every connected client updates in place.
+    """
+    user_id = _get_user(request)
+    updated_at = now_ms()
+    from cptr.utils.chat_task import get_active_chat_ids
+
+    marked = await Chat.mark_all_read(
+        user_id,
+        body.workspace or None,
+        updated_at,
+        exclude_active=get_active_chat_ids(),
+    )
+
+    from cptr.models.users import UserStates
+    from cptr.socket.main import emit_to_user
+    from cptr.utils.chat_task import get_active_chat_ids
+
+    mute_bridge = await UserStates.get_flag(user_id, "bridge_notifications_muted")
+    paths = (
+        [body.workspace]
+        if body.workspace
+        else [path for (path,) in await Chat.workspace_paths_for_user(user_id)]
+    )
+    unread_counts = await Chat.unread_counts_by_workspace(
+        user_id,
+        paths,
+        get_active_chat_ids(),
+        exclude_bridge=mute_bridge,
+    )
+    await emit_to_user(
+        user_id,
+        {
+            "type": "chat:read_all",
+            "workspace": body.workspace or None,
+            "last_read_at": updated_at,
+            "marked": marked,
+            "unread_counts": unread_counts,
+        },
+    )
+    return {"ok": True, "marked": marked, "unread_counts": unread_counts}
+
+
 # ── Models aggregation ──────────────────────────────────────
 # NOTE: Must be declared before /{chat_id} to avoid 'models' being treated as a chat_id.
 
@@ -580,6 +630,59 @@ async def get_usage(request: Request, days: int | None = Query(None, ge=7, le=73
     }
 
 
+# ── Active chats + running subagents (global running-agents panel) ──
+# NOTE: Must be declared before /{chat_id} routes to avoid 'active' being
+# treated as a chat_id.
+
+
+@router.get("/active")
+async def list_active_chats(request: Request):
+    """Return every running agent in one payload for the global panel.
+
+    active_chats: chats with a live task (via get_active_tasks(), which also
+    supplies the running message_id the Stop action needs).
+    subagents: starting/running background subagents via list_async_subagents()
+    (already a JSON-safe whitelist projection — records hold live runtime
+    objects that must never reach a response).
+    """
+    user_id = _get_user(request)
+
+    from cptr.utils.chat_task import get_active_tasks
+
+    active_tasks = get_active_tasks()
+    chats = await Chat.get_by_ids(list(active_tasks)) if active_tasks else []
+
+    active_chats = []
+    for chat in chats:
+        if chat.user_id != user_id:
+            continue
+        meta = chat.meta if isinstance(chat.meta, dict) else {}
+        if is_internal_chat(meta):
+            continue
+        workspace = meta.get("workspace") or ""
+        if not isinstance(workspace, str):
+            workspace = ""
+        active_chats.append(
+            {
+                "chat_id": chat.id,
+                "workspace": workspace,
+                "title": chat.title,
+                "updated_at": chat.updated_at,
+                "message_id": active_tasks.get(chat.id),
+            }
+        )
+    active_chats.sort(key=lambda c: c["updated_at"] or 0, reverse=True)
+
+    from cptr.utils.async_subagents import list_async_subagents
+
+    subagents = [
+        record
+        for record in list_async_subagents(user_id=user_id)
+        if record.get("status") in {"starting", "running"}
+    ]
+    return {"active_chats": active_chats, "subagents": subagents}
+
+
 async def _fetch_provider_models(conn: dict) -> list[str] | None:
     """Discover models from a provider's /models endpoint."""
     import httpx
@@ -647,6 +750,37 @@ async def _fetch_provider_models(conn: dict) -> list[str] | None:
 
 
 # ── Get a chat with all messages ────────────────────────────
+
+
+@router.get("/{chat_id}/subagents")
+async def list_chat_subagents(chat_id: str, request: Request):
+    """List background subagent delegations for a chat (in-memory, current process)."""
+    user_id = _get_user(request)
+    chat = await Chat.get_by_id(chat_id)
+    if not chat or chat.user_id != user_id:
+        raise HTTPException(404, "chat not found")
+
+    from cptr.utils.async_subagents import list_async_subagents
+
+    return {"subagents": list_async_subagents(chat_id)}
+
+
+@router.post("/{chat_id}/subagents/{delegation_id}/cancel")
+async def cancel_chat_subagent(chat_id: str, delegation_id: str, request: Request):
+    """Cancel a running background subagent belonging to a chat."""
+    user_id = _get_user(request)
+    chat = await Chat.get_by_id(chat_id)
+    if not chat or chat.user_id != user_id:
+        raise HTTPException(404, "chat not found")
+
+    from cptr.utils.async_subagents import cancel_async_subagent, list_async_subagents
+
+    records = list_async_subagents(chat_id)
+    if not any(r.get("delegation_id") == delegation_id for r in records):
+        raise HTTPException(404, "subagent not found")
+
+    cancelled = await cancel_async_subagent(delegation_id)
+    return {"ok": cancelled}
 
 
 @router.get("/{chat_id}")
@@ -789,6 +923,10 @@ async def _get_latest_usage_checkpoint(
 # ── Delete a chat ───────────────────────────────────────────
 
 
+class MarkWorkspaceReadRequest(BaseModel):
+    workspace: str | None = None
+
+
 class UpdateChatRequest(BaseModel):
     title: str
 
@@ -810,25 +948,37 @@ async def update_chat(request: Request, chat_id: str, body: UpdateChatRequest):
     if not title:
         raise HTTPException(422, "title cannot be empty")
 
-    updated_at = now_ms()
-    await Chat.update_title(chat_id, title, updated_at)
+    await Chat.update_title(chat_id, title, now_ms())
     workspace = (chat.meta or {}).get("workspace", "")
-    from cptr.utils.chat_task import get_active_chat_ids
-    from cptr.socket.main import emit_to_user
 
+    # Re-read the row: update_title intentionally preserves the original
+    # updated_at (rename is metadata-only and must not flip unread state).
+    # Emitting a fresh now_ms() here would plant a phantom newer timestamp
+    # in every client's cache, re-flipping the client-side unread sort/state
+    # even though the server-side count says 0.
+    refreshed = await Chat.get_by_id(chat_id)
+    effective_updated_at = refreshed.updated_at if refreshed else None
+
+    from cptr.models.users import UserStates
+    from cptr.socket.main import emit_to_user
+    from cptr.utils.chat_task import get_active_chat_ids
+
+    mute_bridge = await UserStates.get_flag(user_id, "bridge_notifications_muted")
     unread_counts = await Chat.unread_counts_by_workspace(
-        user_id, [workspace], get_active_chat_ids()
-    )
-    await emit_to_user(
         user_id,
-        {
-            "chat_id": chat_id,
-            "title": title,
-            "workspace": workspace,
-            "updated_at": updated_at,
-            "workspace_unread_count": unread_counts.get(workspace, 0),
-        },
+        [workspace],
+        get_active_chat_ids(),
+        exclude_bridge=mute_bridge,
     )
+    payload = {
+        "chat_id": chat_id,
+        "title": title,
+        "workspace": workspace,
+        "workspace_unread_count": unread_counts.get(workspace, 0),
+    }
+    if effective_updated_at is not None:
+        payload["updated_at"] = effective_updated_at
+    await emit_to_user(user_id, payload)
     return {"ok": True, "title": title}
 
 
@@ -915,8 +1065,14 @@ async def delete_chat(request: Request, chat_id: str):
     from cptr.socket.main import emit_to_user
     from cptr.utils.chat_task import get_active_chat_ids
 
+    from cptr.models.users import UserStates
+
+    mute_bridge = await UserStates.get_flag(user_id, "bridge_notifications_muted")
     unread_counts = await Chat.unread_counts_by_workspace(
-        user_id, [workspace or ""], get_active_chat_ids()
+        user_id,
+        [workspace or ""],
+        get_active_chat_ids(),
+        exclude_bridge=mute_bridge,
     )
     await emit_to_user(
         user_id,

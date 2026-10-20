@@ -5,7 +5,7 @@
 	 * and an optional context menu button.
 	 */
 	import type { ChatInfo } from '$lib/apis/chat';
-	import { chatStatuses, isChatUnread } from '$lib/stores/chat';
+	import { chatStatuses, isChatUnread, bridgeNotificationsMuted } from '$lib/stores/chat';
 	import Spinner from './Spinner.svelte';
 	import { t } from '$lib/i18n';
 
@@ -19,8 +19,15 @@
 	let { chat, isSelected = false, onclick, onmenu }: Props = $props();
 	let status = $derived($chatStatuses.get(chat.id));
 	let active = $derived(status?.active ?? chat.is_active ?? false);
+	// Meta fallback is unconditional: a chatStatuses entry seeded meta-less has
+	// bridge=false forever otherwise, defeating the mute for this chat.
+	let isBridge = $derived((status?.bridge || Boolean(chat.meta?.bridge_bot_id)) === true);
 	let unread = $derived(
 		!isSelected &&
+			!(
+				$bridgeNotificationsMuted &&
+				isBridge
+			) &&
 			(status
 				? isChatUnread(status)
 				: !active && (chat.last_read_at === null || chat.updated_at > chat.last_read_at))

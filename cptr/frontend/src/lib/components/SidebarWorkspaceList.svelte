@@ -6,13 +6,15 @@
 		reorderWorkspaces,
 		sidebarOpen,
 		activeTab,
-		currentWorkspace
+		currentWorkspace,
+		openChatTabInWorkspace
 	} from '$lib/stores';
 	import { chatEnabled, updateChatStatuses } from '$lib/stores/chat';
 	import { socketStore } from '$lib/stores/socket.svelte';
 	import {
 		deleteChat as apiDeleteChat,
 		getChats,
+		markWorkspaceRead,
 		updateChatTitle,
 		type ChatInfo
 	} from '$lib/apis/chat';
@@ -23,6 +25,7 @@
 	import ChatItem from './common/ChatItem.svelte';
 	import DropdownMenu from './DropdownMenu.svelte';
 	import Icon from './Icon.svelte';
+	import { toast } from 'svelte-sonner';
 
 	interface Props {
 		onaddworkspace: () => void;
@@ -118,6 +121,20 @@
 		closeMobileSidebar();
 	}
 
+	/**
+	 * Cross-workspace tab strip (MVP): pin a chat from another workspace
+	 * side-by-side with the currently loaded one. Same-workspace chats keep
+	 * the classic full-navigation behavior.
+	 */
+	function openChatHere(chatId: string, wsPath: string) {
+		if (!$currentWorkspace || wsPath === $currentWorkspace.path) {
+			openChat(chatId, wsPath);
+			return;
+		}
+		openChatTabInWorkspace(chatId, wsPath);
+		closeMobileSidebar();
+	}
+
 	function newChat(wsPath: string) {
 		goto(`/?workspace=${encodeURIComponent(wsPath)}&chatId`);
 		closeMobileSidebar();
@@ -150,6 +167,18 @@
 		closeWsMenu();
 		await removeWorkspace(path);
 		if (currentPath === path) goto('/');
+	}
+
+	async function handleMarkWorkspaceRead(path: string) {
+		closeWsMenu();
+		try {
+			await markWorkspaceRead(path);
+			// Server pushes chat:read_all; also refresh locally for instant feedback.
+			const data = await getChats(path, WS_CHATS_PAGE_SIZE, 0, 'updated_at', 'desc');
+			wsChatsCache = new Map([...wsChatsCache, [path, data.chats]]);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : String(e));
+		}
 	}
 
 	async function handleDeleteChat() {
@@ -451,6 +480,11 @@
 		anchor={wsMenuAnchor}
 		items={[
 			{
+				label: $t('sidebar.markAllRead'),
+				icon: 'check',
+				onclick: () => handleMarkWorkspaceRead(wsMenuPath!)
+			},
+			{
 				label: $t('sidebar.remove'),
 				icon: 'xmark',
 				onclick: () => handleRemoveWorkspace(wsMenuPath!)
@@ -465,6 +499,15 @@
 		anchor={chatMenu.anchor}
 		align="end"
 		items={[
+			...(chatMenu.wsPath !== $currentWorkspace?.path && $currentWorkspace
+				? [
+						{
+							label: $t('sidebar.openHere'),
+							icon: 'split-horizontal',
+							onclick: () => openChatHere(chatMenu!.chatId, chatMenu!.wsPath)
+						}
+					]
+				: []),
 			{
 				label: $t('files.copyPath'),
 				icon: 'copy',

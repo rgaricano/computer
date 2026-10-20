@@ -10,7 +10,7 @@ import re
 import shutil
 import socket
 from contextlib import suppress
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import httpx
@@ -50,6 +50,48 @@ class AgentDetection:
         return asdict(self)
 
 
+# Fallback search dirs for CLI agents installed outside the service PATH.
+# Node version managers (nvm/fnm/volta) install global npm bins under a
+# version-pinned directory, and user-local installs land in ~/.local/bin —
+# neither is guaranteed to be on the (fixed) systemd service PATH, so bare
+# command names like "cmd" or "agy" fail to resolve even when installed.
+_EXTRA_BIN_DIRS = (
+    os.path.expanduser("~/.local/bin"),
+    os.path.join(os.path.expanduser("~"), ".cargo", "bin"),
+    os.path.join(os.path.expanduser("~"), "bin"),
+)
+
+
+def _npm_global_bin_dirs() -> list[str]:
+    """Best-effort list of version-manager global bin dirs, newest first."""
+    home = os.path.expanduser("~")
+    candidates: list[str] = []
+    # nvm: scan ~/.nvm/versions/node/*/<...>/bin, newest version last -> reversed
+    nvm_root = os.path.join(home, ".nvm", "versions", "node")
+    try:
+        entries = os.listdir(nvm_root)
+    except OSError:
+        entries = []
+    for version in sorted(entries, reverse=True):
+        candidates.append(os.path.join(nvm_root, version, "bin"))
+    # fnm: ~/.fnm/node-versions/<ver>/installation/bin, plus default alias
+    fnm_versions = os.path.join(home, ".fnm", "node-versions")
+    try:
+        entries = os.listdir(fnm_versions)
+    except OSError:
+        entries = []
+    for version in sorted(entries, reverse=True):
+        candidates.append(os.path.join(fnm_versions, version, "installation", "bin"))
+    fnm_default = os.path.join(home, ".fnm", "aliases", "default", "bin")
+    if os.path.isdir(fnm_default):
+        candidates.append(fnm_default)
+    # volta keeps a stable shim dir
+    volta_bin = os.path.join(home, ".volta", "bin")
+    if os.path.isdir(volta_bin):
+        candidates.append(volta_bin)
+    return [d for d in candidates if os.path.isdir(d)]
+
+
 def _resolve_command(command: str) -> str | None:
     command = command.strip()
     if not command:
@@ -57,7 +99,16 @@ def _resolve_command(command: str) -> str | None:
     expanded = os.path.expanduser(command)
     if os.path.isabs(expanded):
         return expanded if os.access(expanded, os.X_OK) else None
-    return shutil.which(command)
+    found = shutil.which(command)
+    if found:
+        return found
+    # Bare names may live in dirs missing from the (fixed) service PATH:
+    # ~/.local/bin, npm/Node-version-manager global bins, etc.
+    for directory in (*_EXTRA_BIN_DIRS, *_npm_global_bin_dirs()):
+        candidate = os.path.join(directory, command)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
 
 def _find_claude_desktop_command() -> str | None:
@@ -142,7 +193,10 @@ async def detect_profile(profile: dict[str, Any]) -> AgentDetection:
     raw_command = str(profile.get("command") or "").strip()
     command = _resolve_command(raw_command)
     default_claude_command = profile.get("agent") == "claude_code" and raw_command == "claude"
-    if profile.get("agent") == "opencode" and str(profile.get("server_url") or "").strip():
+    if (
+        profile.get("agent") in ("opencode", "kilo")
+        and str(profile.get("server_url") or "").strip()
+    ):
         version = None
         if command is not None:
             code, version_text = await _run_probe([command, "--version"])
@@ -239,7 +293,7 @@ async def detect_profile(profile: dict[str, Any]) -> AgentDetection:
             )
         return AgentDetection("ready", command, version, None, models)
 
-    if profile.get("agent") == "opencode":
+    if profile.get("agent") in ("opencode", "kilo"):
         models = await _probe_opencode_models(command, profile)
         if not models:
             return AgentDetection(
@@ -294,6 +348,17 @@ async def detect_profile(profile: dict[str, Any]) -> AgentDetection:
                 [],
             )
         return AgentDetection("ready", command, version, None, models)
+
+    if profile.get("agent") == "antigravity":
+        # Antigravity resolves models itself at run time (and fails loudly on
+        # unknown ones), so no model probe here: binary presence is enough.
+        return AgentDetection("ready", command, version, None, [])
+
+    if profile.get("agent") == "command_code":
+        # Command Code resolves models itself at run time; the CLI's own
+        # default model applies when none is configured. Binary presence is
+        # enough — auth problems surface at turn time with exit code 3.
+        return AgentDetection("ready", command, version, None, [])
 
     return AgentDetection("error", command, version, "Unknown agent")
 
@@ -495,6 +560,35 @@ async def _probe_grok_models(command: str, profile: dict[str, Any]) -> list[str]
         await client.close()
 
 
+def _opencode_config_env(
+    command: str, profile: dict[str, Any], env: dict[str, str]
+) -> dict[str, str]:
+    """Isolation config env for an OpenCode-family `serve` spawn.
+
+    Kilo (an OpenCode fork) reads KILO_CONFIG_CONTENT and no longer falls
+    back to OpenCode config locations; setting both variables is harmless
+    for real OpenCode and required for Kilo.
+    """
+    env = {**env, "OPENCODE_CONFIG_CONTENT": "{}"}
+    if str(profile.get("agent") or "") == "kilo":
+        env["KILO_CONFIG_CONTENT"] = "{}"
+    return env
+
+
+def _opencode_auth_headers(profile: dict[str, Any], password: str) -> dict[str, str]:
+    """Basic-auth headers for an OpenCode-family server.
+
+    Kilo's server defaults KILO_SERVER_USERNAME to "kilo" (an explicit
+    kilocode_change from upstream), so authenticating as "opencode" always
+    401s against a Kilo server.
+    """
+    import base64
+
+    username = "kilo" if str(profile.get("agent") or "") == "kilo" else "opencode"
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
 async def _probe_opencode_models(command: str, profile: dict[str, Any]) -> list[str] | None:
     env = os.environ.copy()
     if profile.get("home"):
@@ -505,6 +599,14 @@ async def _probe_opencode_models(command: str, profile: dict[str, Any]) -> list[
     try:
         if not server_url:
             port = _free_port()
+            # Secure the probe server with a fresh credential and override any
+            # inherited KILO/OPENCODE_SERVER_PASSWORD (which would make the
+            # spawned server require auth the probe never sends).
+            import secrets as _secrets
+
+            password = _secrets.token_urlsafe(24)
+            env["OPENCODE_SERVER_PASSWORD"] = password
+            env["KILO_SERVER_PASSWORD"] = password
             proc = await asyncio.create_subprocess_exec(
                 command,
                 "serve",
@@ -512,15 +614,10 @@ async def _probe_opencode_models(command: str, profile: dict[str, Any]) -> list[
                 f"--port={port}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env={**env, "OPENCODE_CONFIG_CONTENT": "{}"},
+                env=_opencode_config_env(command, profile, env),
             )
             server_url = await _read_opencode_server_url(proc, port)
-        headers = {}
-        if password:
-            import base64
-
-            token = base64.b64encode(f"opencode:{password}".encode()).decode()
-            headers["Authorization"] = f"Basic {token}"
+        headers = _opencode_auth_headers(profile, password)
         for candidate_url in opencode_server_url_candidates(server_url):
             try:
                 async with httpx.AsyncClient(base_url=candidate_url, timeout=5) as client:
@@ -598,9 +695,12 @@ def _free_port() -> int:
 async def _read_opencode_server_url(proc: asyncio.subprocess.Process, port: int) -> str:
     assert proc.stdout is not None
     fallback = f"http://127.0.0.1:{port}"
-    deadline = asyncio.get_running_loop().time() + 5
+    deadline = asyncio.get_running_loop().time() + 15
     while asyncio.get_running_loop().time() < deadline:
-        line = await asyncio.wait_for(proc.stdout.readline(), timeout=1)
+        try:
+            line = await asyncio.wait_for(proc.stdout.readline(), timeout=1)
+        except asyncio.TimeoutError:
+            continue
         if not line:
             break
         text = line.decode(errors="replace").strip()
@@ -631,6 +731,26 @@ async def _opencode_json(
     return {}
 
 
+def _effective_spawn_command(profile: dict[str, Any], detected: AgentDetection) -> str:
+    """The command string adapters should actually spawn.
+
+    Detection resolves the profile's command to an absolute path (possibly
+    via the PATH-fallback scan). If that differs from the raw configured
+    name — e.g. "cmd" resolved to an nvm bin path — the resolved path must
+    be persisted into the effective profile, because adapters spawn
+    profile["command"] verbatim against the (fixed) service PATH, where the
+    bare name may not exist.
+    """
+    raw_command = str(profile.get("command") or "").strip()
+    if detected.command and detected.command != raw_command:
+        return detected.command
+    if detected.command is None and profile.get("agent") == "claude_code":
+        desktop_command = _find_claude_desktop_command()
+        if desktop_command:
+            return desktop_command
+    return raw_command
+
+
 async def get_agent_status(app_state=None, refresh: bool = False) -> dict[str, Any]:
     now = asyncio.get_running_loop().time()
     cache = getattr(app_state, "AGENTS", None) if app_state is not None else None
@@ -652,13 +772,10 @@ async def get_agent_status(app_state=None, refresh: bool = False) -> dict[str, A
         models = list(dict.fromkeys([*(detected.models or []), *(profile.get("models") or [])]))
         available = mode != "disabled" and (mode != "auto" or detected.status == "ready")
         effective_profile = dict(profile)
-        resolved_profile_command = _resolve_command(str(profile.get("command") or ""))
-        if (
-            detected.command
-            and profile.get("agent") == "claude_code"
-            and detected.command != resolved_profile_command
-        ):
-            effective_profile["command"] = detected.command
+        # Persist the resolved absolute command so every adapter spawns the
+        # binary that detection found, even when it lives outside the
+        # (fixed) service PATH — e.g. nvm-managed CLIs or ~/.local/bin.
+        effective_profile["command"] = _effective_spawn_command(profile, detected)
         effective_profile["models"] = models
         if models and effective_profile.get("default_model") not in models:
             effective_profile["default_model"] = models[0]
@@ -693,7 +810,15 @@ async def get_available_agent_model_entries(app_state=None) -> list[dict[str, st
         if not profile["available"]:
             continue
         config = profile["config"]
-        for model in config.get("models") or []:
+        models = list(config.get("models") or [])
+        if not models:
+            # Some adapters (antigravity, command_code) resolve models at run
+            # time and probe none here. A ready profile must still be
+            # selectable: emit one "default" entry that the adapters map to
+            # the CLI's own default model. Without this, the profile is
+            # ready in admin yet invisible in the model picker.
+            models = ["default"]
+        for model in models:
             model_id = model_id_for_profile(config, model)
             entries.append(
                 {

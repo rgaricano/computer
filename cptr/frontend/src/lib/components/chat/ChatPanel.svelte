@@ -10,6 +10,8 @@
 		answerAskUser,
 		cancelTask,
 		compactChat as apiCompactChat,
+		listChatSubagents,
+		cancelChatSubagent,
 		updateCurrentMessage,
 		updateMessage,
 		createMessage,
@@ -20,6 +22,7 @@
 		type ChatSendParams,
 		type ChatInfo,
 		type ToolApprovalMode,
+		type SubagentInfo,
 		type ContextUsage,
 		type ChatTask
 	} from '$lib/apis/chat';
@@ -31,7 +34,9 @@
 		registerStreamingChat,
 		unregisterStreamingChat,
 		updateChatStatuses,
-		registerToolApprovalShortcutHandler
+		registerToolApprovalShortcutHandler,
+		bumpAutoContinueAttempt,
+		autoContinueLimitReached
 	} from '$lib/stores/chat';
 	import { socketStore } from '$lib/stores/socket.svelte';
 	import { onMount, onDestroy, tick } from 'svelte';
@@ -41,7 +46,8 @@
 		openChatTab,
 		streamingBehavior,
 		toolApprovalMode as defaultToolApprovalMode,
-		widescreenMode
+		widescreenMode,
+		autoContinue
 	} from '$lib/stores';
 	import { getPathDisplayName } from '$lib/utils/paths';
 	import {
@@ -68,6 +74,13 @@
 	import { tooltip } from '$lib/tooltip';
 	import { toast } from 'svelte-sonner';
 	import { t } from '$lib/i18n';
+	import {
+		saveDraft,
+		loadDraft,
+		clearDraft,
+		migrateDraft,
+		type ChatDraft
+	} from '$lib/stores/drafts';
 
 	type PreparedTtsAudio = {
 		promise: Promise<Blob>;
@@ -125,6 +138,7 @@
 	let currentMessageId = $state<string | null>(null);
 	let contextUsage = $state<ContextUsage | null>(null);
 	let chatTasks = $state<ChatTask[]>([]);
+	let chatSubagents = $state<SubagentInfo[]>([]);
 	let showStatusModal = $state(false);
 	let showSkillsModal = $state(false);
 	let skillsModalList = $state<SkillInfo[]>([]);
@@ -152,6 +166,7 @@
 	let speakingMessageId = $state<string | null>(null);
 	let ttsStopRequested = false;
 	let commandSessionsChatId: string | null = null;
+	let subagentsChatId: string | null = null;
 	let taskClearTimer: ReturnType<typeof setTimeout> | null = null;
 	// This browser memory cache only helps while the current page is open, such as when
 	// someone taps the same speak button twice. The backend cache is the durable source
@@ -164,6 +179,97 @@
 	let unbindSocketListeners: (() => void) | null = null;
 	let commandSessionsTimer: ReturnType<typeof setInterval> | null = null;
 
+	// ── Draft autosave ──────────────────────────────────────────
+	// TipTap content must survive panel/tab resize, remount, and reload.
+	// Drafts live in localStorage only (see lib/stores/drafts), debounced,
+	// keyed per workspace+chat. Never modal, never autofocus-stealing.
+	let draftNudge = $state<ChatDraft | null>(null);
+	let draftTimer: ReturnType<typeof setTimeout> | null = null;
+
+	/** Scope key for the current draft: real chat id, else the tab id. */
+	function draftScopeId(): string | null {
+		if (chatId) return chatId;
+		// New chats use a `new-*` tab path until the first send assigns a chat id.
+		if (tabId) return tabId;
+		return null;
+	}
+
+	function clearCurrentDraft() {
+		const scopeId = draftScopeId();
+		if (!scopeId) return;
+		clearDraft(workspace, scopeId);
+		draftNudge = null;
+	}
+
+	function refreshDraftNudge() {
+		// Only nudge when the editor is empty (a remount/reload wiped content).
+		if (inputText.trim()) {
+			draftNudge = null;
+			return;
+		}
+		const scopeId = draftScopeId();
+		if (!scopeId) {
+			draftNudge = null;
+			return;
+		}
+		draftNudge = loadDraft(workspace, scopeId);
+	}
+
+	function restoreDraft() {
+		if (!draftNudge) return;
+		inputText = draftNudge.text;
+		draftNudge = null;
+		chatInputEl?.focus();
+	}
+
+	function discardDraft() {
+		clearCurrentDraft();
+	}
+
+	$effect(() => {
+		// Debounced autosave (~500ms) on every input change.
+		const text = inputText;
+		if (text.trim()) {
+			// Typing dismisses a pending restore nudge immediately.
+			draftNudge = null;
+		}
+		if (draftTimer) clearTimeout(draftTimer);
+		draftTimer = setTimeout(() => {
+			draftTimer = null;
+			// Don't wipe a restorable draft: when the editor is empty because of
+			// a remount/reload (nudge pending), keep the stored draft until the
+			// user restores or discards it.
+			if (!text.trim() && draftNudge) return;
+			const scopeId = draftScopeId();
+			if (scopeId) saveDraft(workspace, scopeId, text);
+		}, 500);
+		return () => {
+			if (draftTimer) {
+				clearTimeout(draftTimer);
+				draftTimer = null;
+			}
+		};
+	});
+
+	$effect(() => {
+		// Migrate the provisional tab-scoped draft once a real chat id lands,
+		// and re-check the nudge whenever the viewed chat changes.
+		const id = chatId;
+		if (id && tabId) migrateDraft(workspace, tabId, id);
+		refreshDraftNudge();
+	});
+
+	function formatDraftTime(savedAt: number): string {
+		try {
+			return new Date(savedAt).toLocaleTimeString([], {
+				hour: '2-digit',
+				minute: '2-digit'
+			});
+		} catch {
+			return '';
+		}
+	}
+
 	onMount(() => {
 		if (initialChatId || typeof sessionStorage === 'undefined') return;
 		const key = `cptr:intent:chatDraft:${workspace}`;
@@ -172,6 +278,7 @@
 			inputText = draft;
 			sessionStorage.removeItem(key);
 		}
+		refreshDraftNudge();
 	});
 
 	// ── Windowed rendering ──────────────────────────────────────
@@ -291,6 +398,56 @@
 	});
 	const activePathIds = $derived(new Set(activePath.map(({ msg }) => msg.id)));
 
+	// ── Turn timing ─────────────────────────────────────────────
+	// Preferred: measured task timing from the backend (meta.timing, stamped
+	// at task start + terminal save). This measures actual work, works for
+	// regenerations (whose parent chain points at the ORIGINAL prompt), and
+	// is immune to placeholder created_at semantics.
+	// Fallback (rows without timing meta — historical messages): created_at
+	// delta to the nearest user ancestor. Includes queue time; ~0s in the
+	// normal path because assistant rows are created at send time.
+
+	function toMs(ts: number): number {
+		if (ts > 10_000_000_000_000) return ts / 1_000_000; // µs → ms
+		if (ts > 10_000_000_000) return ts; // ms
+		return ts * 1000; // s → ms
+	}
+
+	const allMsgMap = $derived(new Map(allMessages.map((m) => [m.id, m])));
+
+	function timingSecondsFromMeta(msg: ChatMessageRow): number | null {
+		const timing = msg.meta?.timing as { started_at?: number; completed_at?: number } | undefined;
+		if (!timing) return null;
+		const start = timing.started_at;
+		const end = timing.completed_at;
+		if (typeof start !== 'number' || !start) return null;
+		if (typeof end !== 'number' || !end) return null; // still streaming
+		const deltaMs = toMs(end) - toMs(start);
+		if (deltaMs < 0) return null;
+		return deltaMs / 1000;
+	}
+
+	function turnSecondsFor(msg: ChatMessageRow): number | null {
+		if (msg.role !== 'assistant') return null;
+		const measured = timingSecondsFromMeta(msg);
+		if (measured != null) return measured;
+		if (typeof msg.created_at !== 'number' || !msg.created_at) return null;
+		const seen = new Set<string>();
+		let cur: string | null = msg.parent_id;
+		while (cur && !seen.has(cur)) {
+			seen.add(cur);
+			const parent = allMsgMap.get(cur);
+			if (!parent) return null;
+			if (parent.role === 'user' && typeof parent.created_at === 'number' && parent.created_at) {
+				const deltaMs = toMs(msg.created_at) - toMs(parent.created_at);
+				if (deltaMs < 0) return null;
+				return deltaMs / 1000;
+			}
+			cur = parent.parent_id;
+		}
+		return null;
+	}
+
 	// ── Visible slice of the active path ────────────────────────
 	const hasHiddenMessages = $derived(activePath.length > visibleCount);
 	const visiblePath = $derived(
@@ -343,6 +500,57 @@
 
 	const streaming = $derived(allMessages.some((m) => m.role === 'assistant' && !m.done));
 	const isLanding = $derived(allMessages.length === 0 && !chatId);
+
+	// ── Truncation / Continue affordance ─────────────────────
+	// The last completed assistant message on the active path that the provider
+	// cut off early. Never shown while a task is streaming.
+	const truncatedMessage = $derived.by(() => {
+		if (streaming) return null;
+		for (let i = activePath.length - 1; i >= 0; i--) {
+			const msg = activePath[i].msg;
+			if (msg.role === 'assistant' && msg.done && msg.meta?.truncated) return msg;
+			// stop at the newest completed exchange
+			if (msg.role === 'assistant' && msg.done) return null;
+		}
+		return null;
+	});
+	let chatIsBridge = $state(false);
+	$effect(() => {
+		const msg = truncatedMessage;
+		if (!msg || !get(autoContinue) || chatIsBridge) return;
+		if (!chatId || autoContinueLimitReached(chatId, msg.id)) return;
+		// Guard: don't fire while user is composing; wait a beat for socket syncs
+		const timer = setTimeout(() => {
+			if (inputText.trim()) return;
+			bumpAutoContinueAttempt(chatId, msg.id);
+			void sendContinue('auto');
+		}, 2000);
+		return () => clearTimeout(timer);
+	});
+	async function sendContinue(mode: 'manual' | 'auto') {
+		// queuedMessages guard: when the truncated task finished, its finally
+		// block drains queued inputs and starts a new task; our optimistic
+		// state may still show streaming=false for a beat. Continuing then
+		// would race the dequeued batch as a competing sibling branch.
+		if (sending || streaming || queuedMessages.length > 0) return;
+		const parentId = activePath.length > 0 ? activePath[activePath.length - 1].msg.id : null;
+		if (!selectedModel) return;
+		sending = true;
+		try {
+			await apiSendMessage(
+				mode === 'auto' ? 'Continue' : 'Continue from where you were cut off.',
+				selectedModel,
+				workspace ?? '',
+				chatId ?? undefined,
+				parentId,
+				getChatSendParams(),
+				undefined,
+				undefined
+			);
+		} finally {
+			sending = false;
+		}
+	}
 	const hasChatContent = $derived(
 		activePath.some(({ msg }) => msg.role === 'user' && msg.content.trim())
 	);
@@ -392,6 +600,31 @@
 		commandSessionsChatId = chatId;
 		commandSessions = [];
 		if (chatId) refreshCommandSessions();
+	});
+
+	async function refreshSubagents(id: string) {
+		try {
+			const data = await listChatSubagents(id);
+			chatSubagents = data.subagents ?? [];
+		} catch {
+			chatSubagents = [];
+		}
+	}
+
+	async function handleKillSubagent(delegationId: string) {
+		if (!chatId) return;
+		try {
+			await cancelChatSubagent(chatId, delegationId);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : String(e));
+		}
+	}
+
+	$effect(() => {
+		if (chatId === subagentsChatId) return;
+		subagentsChatId = chatId;
+		chatSubagents = [];
+		if (chatId) refreshSubagents(chatId);
 	});
 
 	// ── Load chat from DB ───────────────────────────────────────
@@ -553,6 +786,7 @@
 		error?: string;
 		pending_inputs_processed?: boolean;
 		async_subagent_pending?: boolean;
+		subagents?: SubagentInfo[];
 		title?: string;
 		workspace?: string;
 		active?: boolean;
@@ -613,6 +847,12 @@
 
 		if (data.type === 'chat:tasks') {
 			setChatTasks(data.tasks ?? []);
+			return;
+		}
+
+		if (data.type === 'chat:subagents') {
+			if (Array.isArray(data.subagents)) chatSubagents = data.subagents;
+			else if (chatId) refreshSubagents(chatId);
 			return;
 		}
 
@@ -727,6 +967,7 @@
 
 	function loadChatSettings(meta: Record<string, any> | null) {
 		resetChatSettings();
+		chatIsBridge = Boolean(meta?.bridge_bot_id);
 		const params = meta?.params;
 		if (!params || typeof params !== 'object') return;
 		if (
@@ -947,6 +1188,7 @@
 			(_: string, id: string, label: string) => `[${label}](file://${id})`
 		);
 		inputText = '';
+		clearCurrentDraft();
 		chatInputEl?.clearUploads();
 		autoScroll = true;
 		await tick();
@@ -1008,6 +1250,8 @@
 					}
 				} catch (e) {
 					console.error('[chat] send (queue) error', e);
+					// Restore the composed text so nothing is lost on failure.
+					inputText = text;
 				} finally {
 					sending = false;
 					chatInputEl?.focus();
@@ -1052,6 +1296,7 @@
 
 			// Swap optimistic temp msg with real messages from backend.
 			chatId = result.chat_id;
+			if (isNew && tabId) migrateDraft(workspace, tabId, result.chat_id);
 			const withoutTemp = allMessages.filter((m) => m.id !== tempId);
 			if (result.user_message && result.assistant_message) {
 				allMessages = [...withoutTemp, result.user_message, result.assistant_message];
@@ -1067,6 +1312,8 @@
 			console.error('[chat] send error', e);
 			allMessages = allMessages.filter((m) => m.id !== tempId);
 			currentMessageId = parentId;
+			// Restore the composed text so nothing is lost on failure.
+			inputText = text;
 			throw e;
 		} finally {
 			sending = false;
@@ -1800,6 +2047,34 @@
 					</h1>
 				</div>
 
+				{#if draftNudge}
+					<div class="pb-1.5" role="status">
+						<div
+							class="app-surface app-interactive flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400"
+						>
+							<span class="truncate"
+								>{$t('chat.draftRestore', {
+									time: formatDraftTime(draftNudge.savedAt)
+								})}</span
+							>
+							<button
+								type="button"
+								class="ml-auto shrink-0 rounded-md px-2 py-0.5 text-[0.6875rem] font-medium transition-colors"
+								style="background: color-mix(in oklab, var(--app-accent) 12%, transparent); color: var(--app-accent);"
+								onclick={restoreDraft}
+							>
+								{$t('chat.draftRestoreAction')}
+							</button>
+							<button
+								type="button"
+								class="shrink-0 rounded-md px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500 hover:bg-gray-500/10 dark:text-gray-400 transition-colors"
+								onclick={discardDraft}
+							>
+								{$t('chat.draftDiscard')}
+							</button>
+						</div>
+					</div>
+				{/if}
 				<ChatInput
 					bind:this={chatInputEl}
 					bind:inputText
@@ -1812,6 +2087,8 @@
 					{workspace}
 					placeholder={$t('chat.placeholder', { name: workspaceDisplayName })}
 					tasks={chatTasks}
+					subagents={chatSubagents}
+					onkillsubagent={handleKillSubagent}
 					askUser={pendingAskUser}
 					onaskuseranswer={handleAskUserAnswer}
 					onsend={send}
@@ -1881,6 +2158,7 @@
 								{chatId}
 								messageId={msg.id}
 								createdAt={msg.created_at}
+								turnSeconds={turnSecondsFor(msg)}
 								{siblingIndex}
 								siblingTotal={siblingIds.length}
 								speaking={speakingMessageId === msg.id}
@@ -1897,9 +2175,69 @@
 			</div>
 		{/if}
 
+		{#if truncatedMessage && !streaming}
+			<div class="px-4 pb-1" style="background: var(--app-bg);">
+				<div class="{$widescreenMode ? 'max-w-full' : 'max-w-2xl'} mx-auto w-full">
+					<div
+						class="app-surface app-interactive flex items-center gap-2 rounded-lg border border-amber-300/40 dark:border-amber-500/30 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400"
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							viewBox="0 0 20 20"
+							fill="currentColor"
+							class="w-3.5 h-3.5 shrink-0"
+							aria-hidden="true"
+						>
+							<path
+								fill-rule="evenodd"
+								d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z"
+								clip-rule="evenodd"
+							/>
+						</svg>
+						<span class="truncate">{$t('chat.responseCutOff')}</span>
+						<button
+							class="shrink-0 ml-auto rounded-md px-2 py-0.5 text-[0.6875rem] font-medium bg-amber-500/10 hover:bg-amber-500/20 dark:bg-amber-400/10 dark:hover:bg-amber-400/20 transition-colors"
+							disabled={sending}
+							onclick={() => sendContinue('manual')}
+						>
+							{$t('chat.continue')}
+						</button>
+					</div>
+				</div>
+			</div>
+		{/if}
+
 		<!-- Input area -->
 		<div class="px-4 py-3" style="background: var(--app-bg);">
 			<div class="{$widescreenMode ? 'max-w-full' : 'max-w-2xl'} mx-auto w-full relative">
+				{#if draftNudge}
+					<div class="pb-1.5" role="status">
+						<div
+							class="app-surface app-interactive flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400"
+						>
+							<span class="truncate"
+								>{$t('chat.draftRestore', {
+									time: formatDraftTime(draftNudge.savedAt)
+								})}</span
+							>
+							<button
+								type="button"
+								class="ml-auto shrink-0 rounded-md px-2 py-0.5 text-[0.6875rem] font-medium transition-colors"
+								style="background: color-mix(in oklab, var(--app-accent) 12%, transparent); color: var(--app-accent);"
+								onclick={restoreDraft}
+							>
+								{$t('chat.draftRestoreAction')}
+							</button>
+							<button
+								type="button"
+								class="shrink-0 rounded-md px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500 hover:bg-gray-500/10 dark:text-gray-400 transition-colors"
+								onclick={discardDraft}
+							>
+								{$t('chat.draftDiscard')}
+							</button>
+						</div>
+					</div>
+				{/if}
 				{#if !autoScroll && activePath.length > 0}
 					<div
 						class="absolute -top-10 left-0 right-0 pr-2 flex justify-end z-30 pointer-events-none"
@@ -1941,6 +2279,8 @@
 					{contextUsage}
 					{hasChatContent}
 					tasks={chatTasks}
+					subagents={chatSubagents}
+					onkillsubagent={handleKillSubagent}
 					askUser={pendingAskUser}
 					onaskuseranswer={handleAskUserAnswer}
 					onsend={send}

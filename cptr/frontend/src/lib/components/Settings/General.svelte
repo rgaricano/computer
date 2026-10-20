@@ -5,7 +5,9 @@
 		streamingBehavior,
 		showUpdateToastPref,
 		updateAvailable,
-		latestVersion
+		latestVersion,
+		autoContinue,
+		showTurnTiming
 	} from '$lib/stores';
 	import type { StreamingBehavior } from '$lib/stores';
 	import { t, locale, changeLocale, supportedLocales } from '$lib/i18n';
@@ -148,6 +150,26 @@
 				{$t('general.updateNotificationsDesc')}
 			</p>
 		{/if}
+
+		<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2 mt-5">{$t('general.autoContinue')}</h3>
+		<label class="flex items-center justify-between cursor-pointer">
+			<span class="text-xs text-gray-600 dark:text-gray-400"
+				>{$t('general.autoContinueToggle')}</span
+			>
+			<ToggleSwitch value={$autoContinue} onchange={(v) => autoContinue.set(v)} />
+		</label>
+		<p class="text-[0.6875rem] text-gray-400 dark:text-gray-600 mt-1">
+			{$t('general.autoContinueDesc')}
+		</p>
+
+		<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2 mt-5">{$t('general.turnTiming')}</h3>
+		<label class="flex items-center justify-between cursor-pointer">
+			<span class="text-xs text-gray-600 dark:text-gray-400">{$t('general.turnTimingToggle')}</span>
+			<ToggleSwitch value={$showTurnTiming} onchange={(v) => showTurnTiming.set(v)} />
+		</label>
+		<p class="text-[0.6875rem] text-gray-400 dark:text-gray-600 mt-1">
+			{$t('general.turnTimingDesc')}
+		</p>
 
 		<h3 class="text-xs text-gray-400 dark:text-gray-600 mb-2 mt-5">{$t('general.messageQueue')}</h3>
 		<div class="flex gap-1">

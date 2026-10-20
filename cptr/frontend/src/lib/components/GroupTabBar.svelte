@@ -16,12 +16,21 @@
 		splitActive,
 		splitCurrentTab,
 		setSplitDirection,
+		updateTabLabel,
 		sidebarOpen,
 		type EditorGroup,
 		type Tab
 	} from '$lib/stores';
 	import { openChatTab } from '$lib/stores';
-	import { chatEnabled, chatStatuses, isChatUnread, streamingChatTabs } from '$lib/stores/chat';
+	import { updateChatTitle } from '$lib/apis/chat';
+	import { toast } from 'svelte-sonner';
+	import {
+		chatEnabled,
+		chatStatuses,
+		isChatUnread,
+		bridgeNotificationsMuted,
+		streamingChatTabs
+	} from '$lib/stores/chat';
 	import { voiceMemosEnabled, showVoiceMemo } from '$lib/stores/audio';
 	import { keybindings, formatChord } from '$lib/stores/keybindings';
 	import Icon from './Icon.svelte';
@@ -31,6 +40,7 @@
 	import { t } from '$lib/i18n';
 	import VoiceMemoModal from './VoiceMemoModal.svelte';
 	import { TAB_DRAG_MIME } from '$lib/constants';
+	import { getPathDisplayName } from '$lib/utils/paths';
 
 	interface Props {
 		group: EditorGroup;
@@ -40,6 +50,7 @@
 		onTabDragOver?: () => void;
 		onHomeSelect?: (tabId: string) => void;
 		onHomeClose?: (tabId: string) => void;
+		onHomeRename?: (tabId: string, label: string) => void;
 		onHomeReorder?: (oldIndex: number, newIndex: number) => void;
 		onHomeMove?: (tabId: string, fromGroupId: string) => void;
 		onHomeNewChat?: () => void;
@@ -60,6 +71,7 @@
 		onTabDragOver,
 		onHomeSelect,
 		onHomeClose,
+		onHomeRename,
 		onHomeReorder,
 		onHomeMove,
 		onHomeNewChat,
@@ -127,6 +139,29 @@
 		e.stopPropagation();
 		if (home) return onHomeClose?.(tabId);
 		closeTab(tabId, group.id);
+	}
+
+	async function renameTab(tab: Tab) {
+		const label = window.prompt($t('bar.renameTab'), tab.label)?.trim();
+		if (!label || label === tab.label) return;
+		if (home) return onHomeRename?.(tab.id, label);
+		// Chat tabs must rename the chat itself, not just the local tab label,
+		// otherwise the next chat load overwrites the label with the DB title
+		// and the sidebar never learns about the change.
+		if (
+			tab.type === 'chat' &&
+			tab.path &&
+			!tab.path.startsWith('new-') &&
+			!tab.path.startsWith('pending-')
+		) {
+			try {
+				await updateChatTitle(tab.path, label);
+			} catch (e) {
+				toast.error(e instanceof Error ? e.message : 'Rename failed');
+				return;
+			}
+		}
+		updateTabLabel(tab.id, label);
 	}
 
 	function handleCloseGroup(e: Event) {
@@ -300,6 +335,11 @@
 		if (!tab.permanent) {
 			if (items.length > 0) items.push({ label: '', onclick: () => {}, divider: true });
 			items.push({
+				label: $t('bar.renameTab'),
+				icon: 'pencil',
+				onclick: () => renameTab(tab)
+			});
+			items.push({
 				label: $t('bar.closeTab'),
 				icon: 'xmark',
 				onclick: () => (home ? onHomeClose?.(tab.id) : closeTab(tab.id, group.id))
@@ -425,7 +465,15 @@
 					<span class="max-w-30 overflow-hidden text-ellipsis">
 						{tab.type === 'files' ? ($activeWorkspace?.name ?? $t('bar.files')) : tab.label}
 					</span>
-					{#if tab.type === 'chat' && !isActive && isChatUnread(chatStatus)}
+					{#if tab.workspacePath && tab.workspacePath !== $activeWorkspace?.path}
+						<span
+							class="max-w-20 shrink-0 overflow-hidden rounded-md bg-sky-500/10 px-1 py-px text-[0.625rem] font-semibold text-sky-600 text-ellipsis dark:bg-sky-400/10 dark:text-sky-300"
+							use:tooltip={tab.workspacePath}
+						>
+							{getPathDisplayName(tab.workspacePath, tab.workspacePath)}
+						</span>
+					{/if}
+					{#if tab.type === 'chat' && !isActive && !($bridgeNotificationsMuted && (chatStatus?.bridge || false)) && isChatUnread(chatStatus)}
 						<span class="size-1.5 shrink-0 rounded-full bg-sky-500" aria-hidden="true"></span>
 					{/if}
 					{#if tab.unsaved}<span class="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0"></span>{/if}
